@@ -6,6 +6,7 @@ import Stats from 'three/examples/jsm/libs/stats.module.js';
 import { ENV_CONFIG, resetEnvConfig, INITIAL_ENV_CONFIG } from '../config/EnvironmentConfig';
 import { PHYSICS_CONFIG, resetPhysicsConfig } from '../config/PhysicsConfig';
 import { PORTAL_CONFIG, resetPortalConfig } from '../config/PortalConfig';
+import { PLAYER_CONFIG, resetPlayerConfig } from '../config/PlayerConfig';
 import { IGameController } from '../interfaces/IGameController';
 
 export default class UIManager {
@@ -40,6 +41,7 @@ export default class UIManager {
       resetEnvConfig();
       resetPhysicsConfig();
       resetPortalConfig();
+      resetPlayerConfig();
       // Restore mirrored state
       this.guiState.timeOfDay = INITIAL_ENV_CONFIG.time.startHour;
       this.guiState.pauseTime = false;
@@ -199,12 +201,22 @@ export default class UIManager {
     env.close();
 
 
-    // ── Physics Folder ─────────────────────────────────────────────
     const physicsFolder = gui.addFolder('Physics');
     physicsFolder.add(PHYSICS_CONFIG, 'gravity', 0, 50, 1).name('Gravity');
     physicsFolder.add(PHYSICS_CONFIG, 'friction', 0, 10, 0.1).name('Friction');
     physicsFolder.add(PHYSICS_CONFIG, 'throwForce', 0, 10, 0.5).name('Throw Force');
     physicsFolder.close();
+
+    // ── Player Folder ─────────────────────────────────────────────
+    const playerFolder = gui.addFolder('Player');
+    playerFolder.add(PLAYER_CONFIG, 'fov', 30, 120, 1).name('FOV').onChange((v: number) => {
+      this.gameController.player.camera.fov = v;
+      this.gameController.player.camera.updateProjectionMatrix();
+    });
+    playerFolder.add(PLAYER_CONFIG, 'moveSpeed', 1, 20, 0.5).name('Move Speed');
+    playerFolder.add(PLAYER_CONFIG, 'jumpForce', 1, 20, 0.5).name('Jump Force');
+    playerFolder.add(PLAYER_CONFIG, 'warpDuration', 0, 2, 0.05).name('Warp Duration');
+    playerFolder.close();
 
     // ── Objects Folder ────────────────────────────────────────────────
     const objects = gui.addFolder("Objects");
@@ -212,6 +224,19 @@ export default class UIManager {
     // Portals
     objects.add(PORTAL_CONFIG, 'width', 1, 10, 0.1).name('Portal Width');
     objects.add(PORTAL_CONFIG, 'height', 1, 15, 0.1).name('Portal Height');
+    
+    const portalTuning = objects.addFolder('Portal Tuning');
+    portalTuning.add(PORTAL_CONFIG, 'teleportThreshold', 0, 1, 0.01).name('TP Threshold');
+    portalTuning.add(PORTAL_CONFIG, 'exitNudge', 0, 2, 0.01).name('Exit Nudge');
+    portalTuning.add(PORTAL_CONFIG, 'cullingDistance', 10, 500, 1).name('Culling Dist');
+    
+    const rendering = portalTuning.addFolder('Rendering');
+    rendering.add(PORTAL_CONFIG, 'renderMinDist', 0.1, 5, 0.1).name('Min Res Dist');
+    rendering.add(PORTAL_CONFIG, 'renderMaxDist', 5, 50, 1).name('Max Res Dist');
+    rendering.add(PORTAL_CONFIG, 'minResolution', 128, 2048, 128).name('Min Res');
+    rendering.add(PORTAL_CONFIG, 'maxResolution', 512, 4096, 512).name('Max Res');
+    portalTuning.close();
+
     objects.add({ spawn: () => { this.gameController.spawnPortalPair(); } }, 'spawn').name('Spawn Portal Pair');
 
     // Props

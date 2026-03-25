@@ -1,6 +1,9 @@
 import * as THREE from 'three';
 import { Grabbable } from '../objects/Grabbable';
 import { PHYSICS_CONFIG } from '../config/PhysicsConfig';
+import { PLAYER_CONFIG } from '../config/PlayerConfig';
+import { physicsSystem } from '../physics/PhysicsSystem';
+import RAPIER from '@dimforge/rapier3d-compat';
 
 export default class Player {
   camera: THREE.PerspectiveCamera;
@@ -14,35 +17,61 @@ export default class Player {
   private isLocked: boolean = false;
   private domElement: HTMLElement;
   public heldItem: Grabbable | null = null;
+  public playerBody: RAPIER.RigidBody | null = null;
+  public collider: RAPIER.Collider | null = null;
+  public characterController: RAPIER.KinematicCharacterController | null = null;
 
-  readonly GRAVITY    = -20;
-  readonly JUMP_FORCE = 8;
-  readonly MOVE_SPEED = 6;
-  readonly PLAYER_HEIGHT = 1.7;
-  readonly CROUCH_HEIGHT = 0.85;
+  // Warp effect state
+  private warpEffectTimer: number = 0;
+  private baseFov: number = 75;
+
+  get GRAVITY() { return -PHYSICS_CONFIG.gravity; }
+  readonly JUMP_FORCE = PLAYER_CONFIG.jumpForce;
+  readonly MOVE_SPEED = PLAYER_CONFIG.moveSpeed;
+  readonly PLAYER_HEIGHT = PLAYER_CONFIG.height;
+  readonly CROUCH_HEIGHT = PLAYER_CONFIG.crouchHeight;
 
   private isCrouching: boolean = false;
-  private currentHeight: number = this.PLAYER_HEIGHT;
+  private currentHeight: number = PLAYER_CONFIG.height;
 
   constructor(camera: THREE.PerspectiveCamera, domElement: HTMLElement = document.body) {
-    this.camera    = camera;
+    this.camera = camera;
+    this.baseFov = camera.fov;
     this.domElement = domElement;
-    this.position  = new THREE.Vector3(0, this.PLAYER_HEIGHT + 0.5, 0);
-    this.velocity  = new THREE.Vector3();
+    this.position = new THREE.Vector3(0, PLAYER_CONFIG.height + 0.5, 0);
+    this.velocity = new THREE.Vector3();
     this.camera.position.copy(this.position);
     this._initPointerLock();
     this._initKeyboard();
   }
 
+  public initPhysics(): void {
+    if (!physicsSystem.world) return;
+
+    const rbDesc = RAPIER.RigidBodyDesc.kinematicPositionBased()
+      .setTranslation(this.position.x, this.position.y, this.position.z);
+    this.playerBody = physicsSystem.world.createRigidBody(rbDesc);
+
+    const radius = PLAYER_CONFIG.radius;
+    const halfHeight = (PLAYER_CONFIG.height / 2) - radius;
+    const colDesc = RAPIER.ColliderDesc.capsule(halfHeight, radius)
+      .setCollisionGroups(0x0001FFFF);
+    this.collider = physicsSystem.world.createCollider(colDesc, this.playerBody);
+
+    this.characterController = physicsSystem.world.createCharacterController(0.01);
+    this.characterController.setUp({ x: 0, y: 1, z: 0 });
+    this.characterController.setApplyImpulsesToDynamicBodies(true);
+  }
+
   private _initPointerLock(): void {
     document.addEventListener('pointerlockchange', () => {
       this.isLocked = document.pointerLockElement === this.domElement;
-      
+
       const instructions = document.getElementById('instructions');
       if (instructions) {
         instructions.style.display = this.isLocked ? 'none' : 'flex';
       }
-      
+
       const startBtn = document.getElementById('start-btn');
       if (startBtn && !this.isLocked) {
         startBtn.innerText = 'Resume Game';
@@ -56,7 +85,7 @@ export default class Player {
     document.addEventListener('mousemove', (e: MouseEvent) => {
       if (!this.isLocked) return;
       const sens = 0.002;
-      this.yaw  -= e.movementX * sens;
+      this.yaw -= e.movementX * sens;
       this.pitch -= e.movementY * sens;
       this.pitch = Math.max(-Math.PI / 2.1, Math.min(Math.PI / 2.1, this.pitch));
       this.camera.quaternion.setFromEuler(new THREE.Euler(this.pitch, this.yaw, 0, 'YXZ'));
@@ -67,7 +96,7 @@ export default class Player {
     document.addEventListener('keydown', (e: KeyboardEvent) => {
       this.keys[e.code] = true;
       if (e.code === 'Space' && this.isOnGround) {
-        this.velocity.y = this.JUMP_FORCE;
+        this.velocity.y = PLAYER_CONFIG.jumpForce;
         this.isOnGround = false;
       }
       if (e.code === 'KeyC' || e.code === 'ControlLeft') {
@@ -92,20 +121,28 @@ export default class Player {
     this.yaw += deltaYaw;
     this.camera.position.copy(this.position);
     this.camera.quaternion.setFromEuler(new THREE.Euler(this.pitch, this.yaw, 0, 'YXZ'));
+    if (this.playerBody) {
+      this.playerBody.setTranslation(pos, true);
+    }
+    this.triggerWarpEffect();
+  }
+
+  public triggerWarpEffect(): void {
+    this.warpEffectTimer = PLAYER_CONFIG.warpDuration;
   }
 
   public grab(item: Grabbable): void {
     if (this.heldItem) this.drop();
     this.heldItem = item;
     item.onGrab();
-    
+
     // Ensure it's treated as a viewmodel item
     this.camera.add(item.mesh);
-    
+
     // Fixed position relative to camera using item's preferred settings
     item.mesh.position.copy(item.holdPosition);
     item.mesh.rotation.copy(item.holdRotation);
-    
+
     // Ensure it updates its matrix
     item.mesh.updateMatrix();
   }
@@ -114,37 +151,49 @@ export default class Player {
     if (!this.heldItem) return;
     const item = this.heldItem;
     this.heldItem = null;
-    
+
     // Reconstruct current movement velocity since Player only stores Y velocity persistently
     const forwardVec = new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
-    const rightVec   = new THREE.Vector3( Math.cos(this.yaw), 0, -Math.sin(this.yaw));
-    const move       = new THREE.Vector3();
+    const rightVec = new THREE.Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
+    const move = new THREE.Vector3();
 
-    if (this.keys['KeyW'] || this.keys['ArrowUp'])    move.add(forwardVec);
-    if (this.keys['KeyS'] || this.keys['ArrowDown'])  move.add(forwardVec.clone().negate());
-    if (this.keys['KeyA'] || this.keys['ArrowLeft'])  move.add(rightVec.clone().negate());
+    if (this.keys['KeyW'] || this.keys['ArrowUp']) move.add(forwardVec);
+    if (this.keys['KeyS'] || this.keys['ArrowDown']) move.add(forwardVec.clone().negate());
+    if (this.keys['KeyA'] || this.keys['ArrowLeft']) move.add(rightVec.clone().negate());
     if (this.keys['KeyD'] || this.keys['ArrowRight']) move.add(rightVec);
 
     if (move.lengthSq() > 0) move.normalize();
-    move.multiplyScalar(this.isCrouching ? this.MOVE_SPEED * 0.5 : this.MOVE_SPEED);
+    move.multiplyScalar(this.isCrouching ? PLAYER_CONFIG.moveSpeed * 0.5 : PLAYER_CONFIG.moveSpeed);
 
     const throwVel = new THREE.Vector3(move.x, this.velocity.y, move.z);
-    
+
     // Add camera-relative throw force
     const lookDir = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
-    throwVel.add(lookDir.multiplyScalar(PHYSICS_CONFIG.throwForce)); // Use configured force
+    throwVel.add(lookDir.multiplyScalar(PHYSICS_CONFIG.throwForce));
+
+    // Drop raycast safeguard
+    const maxDropDist = 2.0;
+    let spawnDist = maxDropDist;
+    if (physicsSystem.world) {
+      const ray = new RAPIER.Ray(this.camera.position, lookDir);
+      // Raycast against everything except dynamic bodies (like other held items/grabbables)
+      // Actually, exclude sensors and kinematic (the player itself) to not hit ourselves
+      const hit = physicsSystem.world.castRay(ray, maxDropDist, true, RAPIER.QueryFilterFlags.EXCLUDE_KINEMATIC | RAPIER.QueryFilterFlags.EXCLUDE_DYNAMIC);
+      if (hit) {
+        spawnDist = Math.max(0.2, hit.timeOfImpact - 0.2); // Provide a 0.2 buffer distance from wall
+      }
+    }
 
     item.onDrop(throwVel);
-    
+
     // Detach from camera and place in world
-    const worldPos = new THREE.Vector3();
-    item.mesh.getWorldPosition(worldPos);
+    const worldPos = this.camera.position.clone().add(lookDir.clone().multiplyScalar(spawnDist));
     item.mesh.position.copy(worldPos);
     // Inherit absolute rotation from the viewmodel momentarily
     const worldQuat = new THREE.Quaternion();
     item.mesh.getWorldQuaternion(worldQuat);
     item.mesh.setRotationFromQuaternion(worldQuat);
-    
+
     this.camera.remove(item.mesh);
   }
 
@@ -156,35 +205,85 @@ export default class Player {
     this.currentHeight += (targetHeight - this.currentHeight) * 15 * dt;
 
     const forward = new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
-    const right   = new THREE.Vector3( Math.cos(this.yaw), 0, -Math.sin(this.yaw));
-    const move    = new THREE.Vector3();
+    const right = new THREE.Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
+    const move = new THREE.Vector3();
 
-    if (this.keys['KeyW'] || this.keys['ArrowUp'])    move.add(forward);
-    if (this.keys['KeyS'] || this.keys['ArrowDown'])  move.add(forward.clone().negate());
-    if (this.keys['KeyA'] || this.keys['ArrowLeft'])  move.add(right.clone().negate());
+    if (this.keys['KeyW'] || this.keys['ArrowUp']) move.add(forward);
+    if (this.keys['KeyS'] || this.keys['ArrowDown']) move.add(forward.clone().negate());
+    if (this.keys['KeyA'] || this.keys['ArrowLeft']) move.add(right.clone().negate());
     if (this.keys['KeyD'] || this.keys['ArrowRight']) move.add(right);
 
     if (move.lengthSq() > 0) move.normalize();
-    move.multiplyScalar(this.isCrouching ? this.MOVE_SPEED * 0.5 : this.MOVE_SPEED);
+    move.multiplyScalar(this.isCrouching ? PLAYER_CONFIG.moveSpeed * 0.5 : PLAYER_CONFIG.moveSpeed);
 
-    this.velocity.y += this.GRAVITY * dt;
+    this.velocity.y += (-PHYSICS_CONFIG.gravity) * dt;
 
-    this.position.x += (move.x) * dt;
-    this.position.y += (this.velocity.y) * dt;
-    this.position.z += (move.z) * dt;
+    if (this.characterController && this.collider && this.playerBody) {
+      const desiredTranslation = new THREE.Vector3(
+        move.x * dt,
+        this.velocity.y * dt,
+        move.z * dt
+      );
 
-    // Ground clamp at platform top (y=0.5) + player current eye height
-    const groundY = 0.5 + this.currentHeight;
-    if (this.isOnGround && this.velocity.y <= 0) {
-      this.position.y = groundY;
-      this.velocity.y = 0;
-    } else if (this.position.y < groundY) {
-      this.position.y = groundY;
-      this.velocity.y = 0;
-      this.isOnGround = true;
+      this.characterController.computeColliderMovement(this.collider, desiredTranslation);
+      const computedMove = this.characterController.computedMovement();
+
+      const newPos = this.playerBody.translation();
+      newPos.x += computedMove.x;
+      newPos.y += computedMove.y;
+      newPos.z += computedMove.z;
+
+      this.playerBody.setNextKinematicTranslation(newPos);
+
+      this.position.set(newPos.x, newPos.y, newPos.z);
+
+      this.isOnGround = this.characterController.computedGrounded();
+      if (this.isOnGround && this.velocity.y < 0) {
+        this.velocity.y = 0;
+      }
+    } else {
+      // Fallback
+      this.position.x += (move.x) * dt;
+      this.position.y += (this.velocity.y) * dt;
+      this.position.z += (move.z) * dt;
+
+      const groundY = 0.5 + this.currentHeight;
+      if (this.isOnGround && this.velocity.y <= 0) {
+        this.position.y = groundY;
+        this.velocity.y = 0;
+      } else if (this.position.y < groundY) {
+        this.position.y = groundY;
+        this.velocity.y = 0;
+        this.isOnGround = true;
+      }
     }
 
+    // Since rigid body center is at translation, we need to offset camera slightly
+    // If half height = 0.85, the center is y=0.85, eyes at top
+    // For simplicity, just place camera exactly there for now, or offset by currentHeight / 2
     this.camera.position.copy(this.position);
+    this.camera.position.y += (this.currentHeight / 2) - 0.2; // roughly eye level above center
+
+    // Apply Warp Effect (FOV distortion and slight ripple)
+    if (this.warpEffectTimer > 0) {
+      this.warpEffectTimer -= dt;
+      const t = this.warpEffectTimer / 0.4; // 1 to 0
+      const intensity = Math.sin(t * Math.PI); // Ease in and out
+
+      // FOV Pulse
+      this.camera.fov = this.baseFov + intensity * 12;
+      this.camera.updateProjectionMatrix();
+
+      // Position ripple (Z-axis wobble to hide the jump)
+      const ripple = Math.sin(t * 30) * 0.1 * intensity;
+      this.camera.position.z += ripple;
+      this.camera.position.x += Math.cos(t * 25) * 0.05 * intensity;
+    } else if (this.camera.fov !== this.baseFov) {
+      // Reset FOV once timer is done
+      this.camera.fov = this.baseFov;
+      this.camera.updateProjectionMatrix();
+    }
+
     if (this.heldItem) {
       this.heldItem.update(dt);
     }

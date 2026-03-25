@@ -12,6 +12,7 @@ import Chest from '../objects/Chest';
 import { Interactable } from '../objects/Interactable';
 import { IGameController } from '../interfaces/IGameController';
 import { PORTAL_CONFIG } from '../config/PortalConfig';
+import { physicsSystem } from '../physics/PhysicsSystem';
 
 export default class GameEngine implements IGameController {
   renderer: THREE.WebGLRenderer;
@@ -31,30 +32,28 @@ export default class GameEngine implements IGameController {
   private interactables: Interactable[] = [];
 
   constructor() {
-    // ---- Renderer ----
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setPixelRatio(window.devicePixelRatio);
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type    = THREE.PCFShadowMap;
-    this.renderer.toneMapping       = THREE.ACESFilmicToneMapping;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 0.5;
-    this.renderer.outputColorSpace  = THREE.SRGBColorSpace;
+    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.renderer.localClippingEnabled = true;
     document.body.appendChild(this.renderer.domElement);
     this.renderer.domElement.id = 'game-canvas';
 
-    // ---- Scene & Camera ----
-    this.scene  = new THREE.Scene();
-    this.camera = new PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000);
-    this.camera.layers.enable(1);  // stars & glow
-    this.camera.layers.enable(2);  // moon phase layer
+    this.scene = new THREE.Scene();
+    this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000);
+    this.camera.layers.enable(1);
+    this.camera.layers.enable(2);
     this.scene.add(this.camera);
 
-    // ---- Game systems ----
     this.gameState = new GameState();
-    this.world     = new World(this.scene, this.camera, this.gameState);
-    this.player    = new Player(this.camera, this.renderer.domElement);
-    this.ui        = new UIManager(this.renderer, this);
+    this.world = new World(this.scene, this.camera, this.gameState);
+    this.player = new Player(this.camera, this.renderer.domElement);
+    this.ui = new UIManager(this.renderer, this);
     this.debugManager = new DebugManager(this.scene, this.world.lighting);
 
     // ---- UI Callbacks (Time & Moon) ----
@@ -74,7 +73,7 @@ export default class GameEngine implements IGameController {
     this.ui.onStarsChange = () => {
       this.world.environment.rebuildStars();
     };
-    // ---- Start button ----
+
     const startBtn = document.getElementById('start-btn');
     if (startBtn) startBtn.addEventListener('click', () => this._handleStart());
     this.renderer.domElement.addEventListener('click', () => this._handleStart());
@@ -87,6 +86,13 @@ export default class GameEngine implements IGameController {
     (window as any).gameEngine = this;
   }
 
+  public async init(): Promise<void> {
+    await physicsSystem.init();
+    // After physics is initialized, let the world init any physics bodies it needs
+    this.world.initPhysics();
+    this.player.initPhysics();
+  }
+
   public spawnPortalPair(): void {
     // One portal at a time - clear previous
     this.world.portalSystem.clearPortals();
@@ -96,19 +102,19 @@ export default class GameEngine implements IGameController {
     const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(p.camera.quaternion);
     forward.y = 0;
     forward.normalize();
-    
+
     const posA = p.position.clone().add(forward.clone().multiplyScalar(4));
     const posB = p.position.clone().add(forward.clone().multiplyScalar(12));
-    
+
     // Face each other on the player's axis
-    const rotA = new THREE.Euler(0, p.yaw + Math.PI, 0); 
-    const rotB = new THREE.Euler(0, p.yaw, 0); 
-    
+    const rotA = new THREE.Euler(0, p.yaw + Math.PI, 0);
+    const rotB = new THREE.Euler(0, p.yaw, 0);
+
     // Sit on platform (assumed at Y=0.5)
     const portalY = PORTAL_CONFIG.height / 2 + 0.5;
     posA.y = portalY;
     posB.y = portalY;
-    
+
     this.world.portalSystem.addPortalPair(
       posA, rotA, PORTAL_CONFIG.colorA,
       posB, rotB, PORTAL_CONFIG.colorB,
@@ -118,11 +124,11 @@ export default class GameEngine implements IGameController {
 
   public toggleDebug(item: string, visible: boolean): void {
     switch (item) {
-      case 'axes':         this.debugManager.setAxesVisible(visible);   break;
-      case 'grid':         this.debugManager.setGridVisible(visible);   break;
-      case 'sunHelper':    this.debugManager.setSunHelperVisible(visible);break;
-      case 'moonHelper':   this.debugManager.setMoonHelperVisible(visible);break;
-      case 'shadowHelper': this.debugManager.setShadowHelperVisible(visible);break;
+      case 'axes': this.debugManager.setAxesVisible(visible); break;
+      case 'grid': this.debugManager.setGridVisible(visible); break;
+      case 'sunHelper': this.debugManager.setSunHelperVisible(visible); break;
+      case 'moonHelper': this.debugManager.setMoonHelperVisible(visible); break;
+      case 'shadowHelper': this.debugManager.setShadowHelperVisible(visible); break;
     }
   }
 
@@ -135,7 +141,7 @@ export default class GameEngine implements IGameController {
 
     this.renderer.domElement.addEventListener('mousedown', (e: MouseEvent) => {
       if (!this.player.getIsLocked()) return;
-      
+
       if (e.button === 0) { // Left click
         this._handleGrabDrop();
       } else if (e.button === 2) { // Right click
@@ -165,7 +171,7 @@ export default class GameEngine implements IGameController {
         let targetObj: THREE.Object3D | null = null;
         let isGrabbable = false;
         let isInteractable = false;
-        
+
         while (obj) {
           if (obj.userData?.grabbable) {
             targetObj = obj;
@@ -196,7 +202,7 @@ export default class GameEngine implements IGameController {
   private _handleUse(): void {
     if (this.player.heldItem) {
       this.player.heldItem.onUse();
-      
+
       // If holding a lighter or water bucket, check for nearby objects
       if (this.player.heldItem instanceof Lighter || this.player.heldItem instanceof WaterBucket) {
         const hit = this.world.interaction.raycastFromCamera();
@@ -221,24 +227,25 @@ export default class GameEngine implements IGameController {
 
   public spawnObject(type: string): void {
     if (type === 'chest') {
-       const chest = new Chest();
-       // position 2 units away, looking flat on the ground
-       const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.player.camera.quaternion);
-       forward.y = 0; 
-       if (forward.lengthSq() > 0) forward.normalize();
-       else forward.set(0, 0, -1);
-       
-       const spawnPos = this.player.position.clone().add(forward.multiplyScalar(2));
-       spawnPos.y = 0.5; // ground
-       chest.mesh.position.copy(spawnPos);
-       
-       // Face player (since normal chest front is Z facing, lookAt point makes its front face that point)
-       chest.mesh.lookAt(this.player.position.x, 0.5, this.player.position.z);
-       
-       this.scene.add(chest.mesh);
-       this.world.interaction.registerInteractive(chest.mesh);
-       this.interactables.push(chest);
-       return;
+      const chest = new Chest();
+      // position 2 units away, looking flat on the ground
+      const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.player.camera.quaternion);
+      forward.y = 0;
+      if (forward.lengthSq() > 0) forward.normalize();
+      else forward.set(0, 0, -1);
+
+      const spawnPos = this.player.position.clone().add(forward.multiplyScalar(2));
+      spawnPos.y = 0.5; // ground
+      chest.mesh.position.copy(spawnPos);
+
+      // Face player (since normal chest front is Z facing, lookAt point makes its front face that point)
+      chest.mesh.lookAt(this.player.position.x, 0.5, this.player.position.z);
+
+      this.scene.add(chest.mesh);
+      this.world.interaction.registerInteractive(chest.mesh);
+      this.interactables.push(chest);
+      chest.initPhysics();
+      return;
     }
 
     let obj: any = null;
@@ -255,6 +262,7 @@ export default class GameEngine implements IGameController {
     this.scene.add(obj.mesh);
     this.world.interaction.registerInteractive(obj.mesh);
     this.grabbables.push(obj);
+    obj.initPhysics();
   }
 
   private _handleStart(): void {
@@ -275,12 +283,17 @@ export default class GameEngine implements IGameController {
       const dt = Math.min((t - this.lastTime) / 1000, 0.1);
       this.lastTime = t;
       this._update(dt);
-      this.renderer.render(this.scene, this.camera);
       
+      if (this.world.portalSystem) {
+        this.world.portalSystem.render(this.renderer, this.scene, this.camera, this.world.environment);
+      }
+      
+      this.renderer.render(this.scene, this.camera);
+
       // Performance Stats
       this.ui.updateFrameTime(dt);
-      
-      this.ui.updateStats(); 
+
+      this.ui.updateStats();
       this.animate();
     });
   }
@@ -298,9 +311,10 @@ export default class GameEngine implements IGameController {
     this.grabbables.forEach(g => g.update(dt));
     this.interactables.forEach(i => i.update(dt));
 
-    this.world.update(dt, this.player.position, this.camera, this.player);
+    this.world.update(dt, this.player, this.grabbables);
     this.debugManager.update();
     this.ui.updateHUD(this.gameTimeHours);
+    physicsSystem.update(dt);
   }
 
   private _updateLighting(): void {

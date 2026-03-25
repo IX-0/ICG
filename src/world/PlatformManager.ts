@@ -1,12 +1,15 @@
 import * as THREE from 'three';
 import PlatformFactory, { PlatformConfig } from '../platforms/PlatformFactory';
 import GameState from '../state/GameState';
+import { physicsSystem } from '../physics/PhysicsSystem';
+import type RAPIER from '@dimforge/rapier3d-compat';
 
 export default class PlatformManager {
   scene: THREE.Scene;
   gameState: GameState;
   factory: PlatformFactory;
   activePlatforms: THREE.Object3D[] = [];
+  activeColliders: RAPIER.Collider[] = [];
 
   constructor(scene: THREE.Scene, gameState: GameState) {
     this.scene = scene;
@@ -28,11 +31,12 @@ export default class PlatformManager {
       type: (['gravel', 'sand', 'volcanic'] as const)[typeIndex],
       variation: variationIndex,
       size: 22,
-      height: 0.5,
+      height: 8.0,
     };
 
     // runtime stub: create a simple box as platform and a button object
     const platformMesh = this.factory.createPlatformMesh(platformConfig);
+    platformMesh.position.y = -3.5;
     this.scene.add(platformMesh);
     this.activePlatforms.push(platformMesh);
 
@@ -47,7 +51,26 @@ export default class PlatformManager {
     this.scene.add(button);
     this.activePlatforms.push(button);
 
+    // If physics is already running, initialize the meshes right away
+    if (physicsSystem.world) {
+      this.initPhysics();
+    }
+
     return { mesh: platformMesh, props, button, config: platformConfig };
+  }
+
+  initPhysics() {
+    // Only add colliders if they haven't been added yet for the current set
+    if (this.activeColliders.length > 0) return;
+
+    this.activePlatforms.forEach(obj => {
+      // Create static trimeshes for the platforms and props
+      // Button is small, but let's make it static too for now
+      if (obj instanceof THREE.Mesh) {
+        const collider = physicsSystem.addStaticTrimesh(obj);
+        this.activeColliders.push(collider);
+      }
+    });
   }
 
   clearPlatforms() {
@@ -62,6 +85,9 @@ export default class PlatformManager {
       }
     });
     this.activePlatforms = [];
+
+    this.activeColliders.forEach(c => physicsSystem.removeCollider(c));
+    this.activeColliders = [];
   }
 
   getActivePlatform(): THREE.Object3D | null {

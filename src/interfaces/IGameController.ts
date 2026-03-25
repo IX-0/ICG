@@ -1,4 +1,7 @@
+import Player from '../player/Player';
+
 export interface IGameController {
+  player: Player;
   /**
    * Request to spawn a specific type of object in front of the player.
    * @param type The type alias of the object ('torch', 'lighter', 'bucket', 'chest')

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 // @ts-ignore
 import { Water } from 'three/examples/jsm/objects/Water.js';
+import { physicsSystem } from '../physics/PhysicsSystem';
 
 export default class WaterSystem {
   scene: THREE.Scene;
@@ -13,10 +14,7 @@ export default class WaterSystem {
     this.scene = scene;
   }
 
-  create(sunPosition: THREE.Vector3 = new THREE.Vector3(100, 80, 100)): void {
-    // ── Sandy seabed ─────────────────────────────────────────────────────────
-    // Placed below the water (water at y=-0.5, seabed at y=-7) so it's visible
-    // through the semi-transparent water surface.
+  public create(sunPosition: THREE.Vector3 = new THREE.Vector3(100, 80, 100)): void {
     const seabedGeo = new THREE.PlaneGeometry(2000, 2000, 1, 1);
     const seabedMat = new THREE.MeshStandardMaterial({
       map: _makeSandTexture(),
@@ -29,7 +27,10 @@ export default class WaterSystem {
     this.seabed.receiveShadow = true;
     this.scene.add(this.seabed);
 
-    // ── Water surface ─────────────────────────────────────────────────────────
+    if (physicsSystem.world) {
+      physicsSystem.addStaticTrimesh(this.seabed);
+    }
+
     const waterNormals = new THREE.TextureLoader().load(
       'https://threejs.org/examples/textures/waternormals.jpg',
       (tex) => { tex.wrapS = tex.wrapT = THREE.RepeatWrapping; }
@@ -55,13 +56,13 @@ export default class WaterSystem {
     this.scene.add(this.water);
   }
 
-  update(deltaTime: number): void {
+  public update(deltaTime: number): void {
     if (this.water) {
       this.water.material.uniforms['time'].value += deltaTime * this.TIME_SCALE;
     }
   }
 
-  updateForLighting(sunPosition: THREE.Vector3): void {
+  public updateForLighting(sunPosition: THREE.Vector3): void {
     if (this.water) {
       this.water.material.uniforms['sunDirection'].value
         .copy(sunPosition.clone().normalize());
@@ -69,18 +70,15 @@ export default class WaterSystem {
   }
 }
 
-/** Canvas-generated sandy seabed texture */
 function _makeSandTexture(): THREE.CanvasTexture {
   const size = 512;
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = size;
   const ctx = canvas.getContext('2d')!;
 
-  // Base warm sand
   ctx.fillStyle = '#c8a060';
   ctx.fillRect(0, 0, size, size);
 
-  // Sand ripple lines (shallow water ripple pattern)
   ctx.strokeStyle = 'rgba(180,140,70,0.35)';
   ctx.lineWidth = 1.5;
   for (let i = 0; i < 40; i++) {
@@ -96,7 +94,6 @@ function _makeSandTexture(): THREE.CanvasTexture {
     ctx.stroke();
   }
 
-  // Scattered pebbles / darker patches
   for (let i = 0; i < 180; i++) {
     const x = Math.random() * size;
     const y = Math.random() * size;
@@ -108,7 +105,6 @@ function _makeSandTexture(): THREE.CanvasTexture {
     ctx.fill();
   }
 
-  // Subtle brightness variation (wet/dry patches)
   for (let i = 0; i < 60; i++) {
     const x = Math.random() * size;
     const y = Math.random() * size;
@@ -124,6 +120,6 @@ function _makeSandTexture(): THREE.CanvasTexture {
 
   const tex = new THREE.CanvasTexture(canvas);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(8, 8); // tile it 8× so ripples look fine-grained
+  tex.repeat.set(8, 8); 
   return tex;
 }

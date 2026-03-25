@@ -6,6 +6,11 @@ export interface IGrabbable {
   holdRotation: THREE.Euler;
 
   /**
+   * Initialize physical properties for the object (rigid body & collider).
+   */
+  initPhysics(): void;
+
+  /**
    * Triggered when the player successfully grabs the item.
    */
   onGrab(): void;

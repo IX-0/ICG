@@ -8,6 +8,11 @@ export abstract class Interactable implements IInteractable, IUpdatable {
   public abstract mesh: THREE.Object3D;
   
   /**
+   * Initialize physical properties for the object (rigid body & collider).
+   */
+  public abstract initPhysics(): void;
+
+  /**
    * Called when the player clicks on this object
    * @param player The player instance
    * @param heldItem The item currently held by the player (if any)

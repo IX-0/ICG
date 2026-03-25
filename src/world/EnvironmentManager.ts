@@ -53,18 +53,18 @@ export default class EnvironmentManager {
 
     // ── Stars ───────────────────────────────────
     const s = cfg.stars;
-    this.starTiers.push(_makeStarTier(s.smallCount,  s.smallSize,  s.smallBrightness,  scene));
+    this.starTiers.push(_makeStarTier(s.smallCount, s.smallSize, s.smallBrightness, scene));
     this.starTiers.push(_makeStarTier(s.mediumCount, s.mediumSize, s.mediumBrightness, scene));
-    this.starTiers.push(_makeStarTier(s.largeCount,  s.largeSize,  s.largeBrightness,  scene));
+    this.starTiers.push(_makeStarTier(s.largeCount, s.largeSize, s.largeBrightness, scene));
   }
 
-  setup(lighting: LightingSystem): void {
+  public setup(lighting: LightingSystem): void {
     this.lighting = lighting;
     this.scene.fog = new THREE.FogExp2(ENV_CONFIG.fog.dayColor, ENV_CONFIG.fog.dayDensity);
     this.scene.background = null;
 
     this.sky = new Sky();
-    this.sky.scale.setScalar(10000);
+    this.sky.scale.setScalar(450000);
     this.scene.add(this.sky);
 
     this._applySkyParams(0);
@@ -79,10 +79,10 @@ export default class EnvironmentManager {
     if (!this.sky) return;
     const u = this.sky.material.uniforms;
     const a = ENV_CONFIG.atmosphere;
-    u['turbidity'].value      = THREE.MathUtils.lerp(a.turbidityDay,   a.turbidityNight,  nightFactor);
-    u['rayleigh'].value        = THREE.MathUtils.lerp(a.rayleighDay,    a.rayleighNight,   nightFactor);
-    u['mieCoefficient'].value  = THREE.MathUtils.lerp(a.mieCoeffDay,    a.mieCoeffNight,   nightFactor);
-    u['mieDirectionalG'].value = THREE.MathUtils.lerp(a.mieGDay,        a.mieGNight,       nightFactor);
+    u['turbidity'].value = THREE.MathUtils.lerp(a.turbidityDay, a.turbidityNight, nightFactor);
+    u['rayleigh'].value = THREE.MathUtils.lerp(a.rayleighDay, a.rayleighNight, nightFactor);
+    u['mieCoefficient'].value = THREE.MathUtils.lerp(a.mieCoeffDay, a.mieCoeffNight, nightFactor);
+    u['mieDirectionalG'].value = THREE.MathUtils.lerp(a.mieGDay, a.mieGNight, nightFactor);
   }
 
   private _applySunToSky(): void {
@@ -111,7 +111,7 @@ export default class EnvironmentManager {
 
     // Moon at 800 units in the moon direction
     const moonNorm = moonDir.clone().normalize();
-    const moonPos  = cameraPos.clone().addScaledVector(moonNorm, 800);
+    const moonPos = cameraPos.clone().addScaledVector(moonNorm, 800);
     this.moonMesh.position.copy(moonPos);
     this.moonGlowSprite.position.copy(moonPos);
 
@@ -127,10 +127,10 @@ export default class EnvironmentManager {
         phaseAngle = (dayNumber % cfg.time.lunarCycleDays) * (Math.PI * 2 / cfg.time.lunarCycleDays);
       } else {
         switch (this.currentMoonPhase) {
-          case 'New':      phaseAngle = Math.PI;        break;
+          case 'New': phaseAngle = Math.PI; break;
           case 'Crescent': phaseAngle = Math.PI * 0.75; break;
-          case 'Quarter':  phaseAngle = Math.PI * 0.5;  break;
-          case 'Full':     phaseAngle = 0;               break;
+          case 'Quarter': phaseAngle = Math.PI * 0.5; break;
+          case 'Full': phaseAngle = 0; break;
         }
       }
 
@@ -187,9 +187,9 @@ export default class EnvironmentManager {
     this.starTiers = [];
 
     const s = ENV_CONFIG.stars;
-    this.starTiers.push(_makeStarTier(s.smallCount,  s.smallSize,  s.smallBrightness,  this.scene));
+    this.starTiers.push(_makeStarTier(s.smallCount, s.smallSize, s.smallBrightness, this.scene));
     this.starTiers.push(_makeStarTier(s.mediumCount, s.mediumSize, s.mediumBrightness, this.scene));
-    this.starTiers.push(_makeStarTier(s.largeCount,  s.largeSize,  s.largeBrightness,  this.scene));
+    this.starTiers.push(_makeStarTier(s.largeCount, s.largeSize, s.largeBrightness, this.scene));
   }
 
   triggerWings(_p: THREE.Vector3): void { /* TODO */ }
@@ -209,11 +209,11 @@ function _makeGlowTexture(): THREE.CanvasTexture {
   canvas.width = canvas.height = size;
   const ctx = canvas.getContext('2d')!;
   const grad = ctx.createRadialGradient(c, c, 0, c, c, c);
-  grad.addColorStop(0,    'rgba(210, 230, 255, 1.0)');
+  grad.addColorStop(0, 'rgba(210, 230, 255, 1.0)');
   grad.addColorStop(0.15, 'rgba(170, 205, 255, 0.85)');
   grad.addColorStop(0.40, 'rgba(110, 160, 255, 0.40)');
   grad.addColorStop(0.70, 'rgba( 60, 100, 220, 0.12)');
-  grad.addColorStop(1,    'rgba(  0,  20,  80, 0.00)');
+  grad.addColorStop(1, 'rgba(  0,  20,  80, 0.00)');
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, size, size);
   return new THREE.CanvasTexture(canvas);
@@ -229,7 +229,7 @@ function _makeStarTier(count: number, size: number, brightness: number, scene: T
     const theta = Math.random() * Math.PI * 2;
     const cosEl = Math.random();
     const sinEl = Math.sqrt(1 - cosEl * cosEl);
-    pos[i * 3]     = SR * sinEl * Math.cos(theta);
+    pos[i * 3] = SR * sinEl * Math.cos(theta);
     pos[i * 3 + 1] = SR * cosEl;
     pos[i * 3 + 2] = SR * sinEl * Math.sin(theta);
   }
@@ -239,10 +239,10 @@ function _makeStarTier(count: number, size: number, brightness: number, scene: T
   dc.width = dc.height = 32;
   const dCtx = dc.getContext('2d')!;
   const dGrad = dCtx.createRadialGradient(16, 16, 0, 16, 16, 16);
-  dGrad.addColorStop(0,    `rgba(255,255,255,${brightness})`);
+  dGrad.addColorStop(0, `rgba(255,255,255,${brightness})`);
   dGrad.addColorStop(0.25, `rgba(230,240,255,${brightness * 0.8})`);
-  dGrad.addColorStop(0.6,  `rgba(150,200,255,${brightness * 0.3})`);
-  dGrad.addColorStop(1,    'rgba(0,0,0,0)');
+  dGrad.addColorStop(0.6, `rgba(150,200,255,${brightness * 0.3})`);
+  dGrad.addColorStop(1, 'rgba(0,0,0,0)');
   dCtx.fillStyle = dGrad;
   dCtx.fillRect(0, 0, 32, 32);
 

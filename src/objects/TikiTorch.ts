@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { Grabbable } from './Grabbable';
+import { physicsSystem } from '../physics/PhysicsSystem';
 
 export default class TikiTorch extends Grabbable {
   public mesh: THREE.Group;
@@ -34,18 +35,25 @@ export default class TikiTorch extends Grabbable {
     this.mesh.userData = { grabbable: true, instance: this };
   }
 
+  public initPhysics(): void {
+    const { body, collider } = physicsSystem.addDynamicPrimitive(this.mesh, 'cylinder', [1.2, 0.2]);
+    this.rigidBody = body;
+    this.collider = collider;
+  }
+
   public onGrab(): void {
     super.onGrab();
   }
 
   public onDrop(throwVel: THREE.Vector3): void {
     super.onDrop(throwVel);
-    // Give it a random tumble when dropped
-    this.angularVelocity.set(
-      (Math.random() - 0.5) * 4,
-      (Math.random() - 0.5) * 4,
-      (Math.random() - 0.5) * 4
-    );
+    if (this.rigidBody) {
+      this.rigidBody.setAngvel({
+        x: (Math.random() - 0.5) * 4,
+        y: (Math.random() - 0.5) * 4,
+        z: (Math.random() - 0.5) * 4
+      }, true);
+    }
   }
 
   public onUse(): void {

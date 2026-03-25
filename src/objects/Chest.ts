@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { Interactable } from './Interactable';
 import Player from '../player/Player';
 import { IGrabbable } from '../interfaces/IGrabbable';
+import { physicsSystem } from '../physics/PhysicsSystem';
 
 export default class Chest extends Interactable {
   public mesh: THREE.Group;
@@ -72,6 +73,12 @@ export default class Chest extends Interactable {
       }
     });
 
+  }
+
+  public initPhysics(): void {
+    // Width 1.0, Height 0.6, Depth 0.8 => half-extents = [0.5, 0.3, 0.4]
+    // chest base sits on ground, its position was shifted y=0.5
+    physicsSystem.addFixedPrimitive(this.mesh, 'box', [0.5, 0.3, 0.4]);
   }
 
   public onInteract(player: Player, heldItem: IGrabbable | null): void {
