@@ -1,11 +1,11 @@
 import * as THREE from 'three';
+import RAPIER from '@dimforge/rapier3d-compat';
 import { IGrabbable } from '../interfaces/IGrabbable';
 import { IUpdatable } from '../interfaces/IUpdatable';
-import RAPIER from '@dimforge/rapier3d-compat';
 import { physicsSystem } from '../engine/PhysicsSystem';
+import { ModeledObject } from './ModeledObject';
 
-export abstract class Grabbable implements IGrabbable, IUpdatable {
-  public abstract mesh: THREE.Object3D;
+export abstract class Grabbable extends ModeledObject implements IGrabbable, IUpdatable {
   public rigidBody: RAPIER.RigidBody | null = null;
   public collider: RAPIER.Collider | null = null;
   public isHeld: boolean = false;
@@ -19,6 +19,14 @@ export abstract class Grabbable implements IGrabbable, IUpdatable {
   public onGrab(): void {
     this.isHeld = true;
     
+    if (this.rigidBody) {
+      physicsSystem.removeBody(this.rigidBody);
+      this.rigidBody = null;
+      this.collider = null;
+    }
+  }
+
+  public cleanupPhysics(): void {
     if (this.rigidBody) {
       physicsSystem.removeBody(this.rigidBody);
       this.rigidBody = null;
@@ -40,20 +48,20 @@ export abstract class Grabbable implements IGrabbable, IUpdatable {
     }
   }
 
-  public abstract onUse(): void;
+  public abstract onUse(target?: any): void;
 
-  public update(_dt: number): void {
+
+  public update(dt: number): void {
     if (this.isHeld || !this.rigidBody) return;
 
-    // Sync three.js mesh to Rapier rigid body when in world
+    // Frame-rate independent lerp: ~98% convergence per second at any FPS.
+    const t = 1 - Math.pow(0.01, dt);
     const pos = this.rigidBody.translation();
     const rot = this.rigidBody.rotation();
-    
-    const targetPos = new THREE.Vector3(pos.x, pos.y, pos.z);
-    const targetQuat = new THREE.Quaternion(rot.x, rot.y, rot.z, rot.w);
-    
-    this.mesh.position.lerp(targetPos, 0.4);
-    this.mesh.quaternion.slerp(targetQuat, 0.4);
+
+    this.mesh.position.lerp(new THREE.Vector3(pos.x, pos.y, pos.z), t);
+    this.mesh.quaternion.slerp(new THREE.Quaternion(rot.x, rot.y, rot.z, rot.w), t);
     this.mesh.updateMatrix();
   }
+
 }

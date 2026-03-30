@@ -3,14 +3,25 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { IUpdatable } from '../interfaces/IUpdatable';
 import { PHYSICS_CONFIG } from '../config/PhysicsConfig';
 
+/** Half-extents for a box: [hx, hy, hz]. */
+export type BoxHalfExtents = [number, number, number];
+/** Cylinder size: [halfHeight, radius]. */
+export type CylinderSize = [number, number];
+/** Sphere size: [radius]. */
+export type SphereSize = [number];
+
+export type PrimitiveShape =
+  | { type: 'box';      size: BoxHalfExtents }
+  | { type: 'cylinder'; size: CylinderSize }
+  | { type: 'sphere';   size: SphereSize };
+
 export class PhysicsSystem implements IUpdatable {
   public world!: RAPIER.World;
   private isInitialized: boolean = false;
 
   public async init(): Promise<void> {
     await RAPIER.init();
-    const gravity = { x: 0.0, y: -PHYSICS_CONFIG.gravity, z: 0.0 };
-    this.world = new RAPIER.World(gravity);
+    this.world = new RAPIER.World({ x: 0, y: -PHYSICS_CONFIG.gravity, z: 0 });
     this.isInitialized = true;
   }
 
@@ -20,131 +31,171 @@ export class PhysicsSystem implements IUpdatable {
     this.world.step();
   }
 
+  // ── Helpers ────────────────────────────────────────────────────────────────
+
   /**
-   * Creates a static trimesh collider from a Three.js mesh.
+   * Flush the full parent chain before sampling matrixWorld.
+   * `updateMatrixWorld(true)` only goes downward; this also walks UP.
+   */
+  private static flushWorldMatrix(obj: THREE.Object3D): void {
+    obj.updateWorldMatrix(true, false);
+  }
+
+  /** Build index array for non-indexed geometry. */
+  private static buildIndices(localPositions: Float32Array): Uint32Array {
+    const count = localPositions.length / 3;
+    const arr = new Uint32Array(count);
+    for (let i = 0; i < count; i++) arr[i] = i;
+    return arr;
+  }
+
+  private static getIndices(geometry: THREE.BufferGeometry): Uint32Array {
+    if (geometry.index) return new Uint32Array(geometry.index.array);
+    return PhysicsSystem.buildIndices(
+      geometry.attributes.position.array as Float32Array
+    );
+  }
+
+  // ── Static trimesh ─────────────────────────────────────────────────────────
+
+  /**
+   * Creates a fixed trimesh collider whose vertices are baked to world space.
+   * The rigid body lives at origin — all transforms are embedded in the vertices.
+   * Use for static geometry that never moves.
    */
   public addStaticTrimesh(mesh: THREE.Mesh): RAPIER.Collider {
-    const geometry = mesh.geometry;
-    let position = mesh.position;
-    let rotation = mesh.quaternion;
+    PhysicsSystem.flushWorldMatrix(mesh);
 
-    mesh.updateMatrixWorld(true);
+    const localPositions = mesh.geometry.attributes.position.array as Float32Array;
+    const worldPositions = new Float32Array(localPositions.length);
+    const v = new THREE.Vector3();
 
-    const positions = geometry.attributes.position.array as Float32Array;
-    const indices = geometry.index ? (geometry.index.array as Uint32Array) : undefined;
-
-    let trimeshIndices: Uint32Array;
-    if (indices) {
-      trimeshIndices = new Uint32Array(indices);
-    } else {
-      const vertexCount = positions.length / 3;
-      trimeshIndices = new Uint32Array(vertexCount);
-      for (let i = 0; i < vertexCount; i++) {
-        trimeshIndices[i] = i;
-      }
+    for (let i = 0; i < localPositions.length; i += 3) {
+      v.set(localPositions[i], localPositions[i + 1], localPositions[i + 2])
+        .applyMatrix4(mesh.matrixWorld);
+      worldPositions[i]     = v.x;
+      worldPositions[i + 1] = v.y;
+      worldPositions[i + 2] = v.z;
     }
 
-    const scale = mesh.scale;
-    let scaledPositions = new Float32Array(positions.length);
-    for (let i = 0; i < positions.length; i += 3) {
-      scaledPositions[i] = positions[i] * scale.x;
-      scaledPositions[i+1] = positions[i+1] * scale.y;
-      scaledPositions[i+2] = positions[i+2] * scale.z;
-    }
-
-    const rigidBodyDesc = RAPIER.RigidBodyDesc.fixed()
-      .setTranslation(position.x, position.y, position.z)
-      .setRotation(rotation);
-    
-    const rigidBody = this.world.createRigidBody(rigidBodyDesc);
-
-    const colliderDesc = RAPIER.ColliderDesc.trimesh(scaledPositions, trimeshIndices);
-    return this.world.createCollider(colliderDesc, rigidBody);
+    const body = this.world.createRigidBody(
+      RAPIER.RigidBodyDesc.fixed().setTranslation(0, 0, 0)
+    );
+    const colliderDesc = RAPIER.ColliderDesc.trimesh(
+      worldPositions,
+      PhysicsSystem.getIndices(mesh.geometry)
+    );
+    return this.world.createCollider(colliderDesc, body);
   }
 
-  public addFixedPrimitive(
-      mesh: THREE.Object3D, 
-      type: 'box' | 'cylinder' | 'sphere', 
-      size: number[]
-  ): { body: RAPIER.RigidBody, collider: RAPIER.Collider } {
-    let position = mesh.getWorldPosition(new THREE.Vector3());
-    let rotation = mesh.getWorldQuaternion(new THREE.Quaternion());
+  // ── Kinematic trimesh ──────────────────────────────────────────────────────
 
-    const rigidBodyDesc = RAPIER.RigidBodyDesc.fixed()
-      .setTranslation(position.x, position.y, position.z)
-      .setRotation(rotation);
+  /**
+   * Creates a kinematic trimesh collider for an animated mesh.
+   * Geometry is stored in the body's local space (scaled but not rotated/translated).
+   * Call `updateKinematicBodyPose()` every frame to follow the mesh's movement.
+   */
+  public addKinematicTrimesh(mesh: THREE.Mesh): { body: RAPIER.RigidBody; collider: RAPIER.Collider } {
+    PhysicsSystem.flushWorldMatrix(mesh);
 
-    const rigidBody = this.world.createRigidBody(rigidBodyDesc);
+    const worldPos = new THREE.Vector3();
+    const worldQuat = new THREE.Quaternion();
+    const worldScale = new THREE.Vector3();
+    mesh.matrixWorld.decompose(worldPos, worldQuat, worldScale);
 
-    let colliderDesc: RAPIER.ColliderDesc;
-    
-    switch(type) {
-      case 'box':
-        colliderDesc = RAPIER.ColliderDesc.cuboid(size[0], size[1], size[2]);
-        break;
-      case 'cylinder':
-        colliderDesc = RAPIER.ColliderDesc.cylinder(size[0], size[1]);
-        break;
-      case 'sphere':
-        colliderDesc = RAPIER.ColliderDesc.ball(size[0]);
-        break;
-      default:
-        colliderDesc = RAPIER.ColliderDesc.ball(0.5);
+    const localPositions = mesh.geometry.attributes.position.array as Float32Array;
+    const scaledPositions = new Float32Array(localPositions.length);
+    for (let i = 0; i < localPositions.length; i += 3) {
+      scaledPositions[i]     = localPositions[i]     * worldScale.x;
+      scaledPositions[i + 1] = localPositions[i + 1] * worldScale.y;
+      scaledPositions[i + 2] = localPositions[i + 2] * worldScale.z;
     }
-    colliderDesc.setFriction(PHYSICS_CONFIG.friction);
 
-    const collider = this.world.createCollider(colliderDesc, rigidBody);
-    return { body: rigidBody, collider };
+    const body = this.world.createRigidBody(
+      RAPIER.RigidBodyDesc.kinematicPositionBased()
+        .setTranslation(worldPos.x, worldPos.y, worldPos.z)
+        .setRotation(worldQuat)
+    );
+    const colliderDesc = RAPIER.ColliderDesc
+      .trimesh(scaledPositions, PhysicsSystem.getIndices(mesh.geometry))
+      .setFriction(PHYSICS_CONFIG.friction);
+    const collider = this.world.createCollider(colliderDesc, body);
+
+    return { body, collider };
   }
 
   /**
-   * Creates a dynamic rigid body with a basic primitive collider (box/sphere/capsule).
+   * Pushes the mesh's current world transform into a kinematic rigid body.
+   * Call this every frame after the AnimationMixer has advanced.
+   */
+  public updateKinematicBodyPose(body: RAPIER.RigidBody, mesh: THREE.Object3D): void {
+    PhysicsSystem.flushWorldMatrix(mesh);
+    const pos = mesh.getWorldPosition(new THREE.Vector3());
+    const rot = mesh.getWorldQuaternion(new THREE.Quaternion());
+    body.setNextKinematicTranslation({ x: pos.x, y: pos.y, z: pos.z });
+    body.setNextKinematicRotation({ x: rot.x, y: rot.y, z: rot.z, w: rot.w });
+  }
+
+  // ── Primitive colliders ────────────────────────────────────────────────────
+
+  /**
+   * Creates a fixed rigid body with a primitive collider (box / cylinder / sphere).
+   * `shape` is a discriminated union so callers get type-checked size arrays.
+   */
+  public addFixedPrimitive(
+    anchor: THREE.Object3D,
+    shape: PrimitiveShape
+  ): { body: RAPIER.RigidBody; collider: RAPIER.Collider } {
+    PhysicsSystem.flushWorldMatrix(anchor);
+    const pos = anchor.getWorldPosition(new THREE.Vector3());
+    const rot = anchor.getWorldQuaternion(new THREE.Quaternion());
+
+    const body = this.world.createRigidBody(
+      RAPIER.RigidBodyDesc.fixed().setTranslation(pos.x, pos.y, pos.z).setRotation(rot)
+    );
+    const collider = this.world.createCollider(
+      PhysicsSystem.buildPrimitiveDesc(shape).setFriction(PHYSICS_CONFIG.friction),
+      body
+    );
+    return { body, collider };
+  }
+
+  /**
+   * Creates a dynamic rigid body with a primitive collider.
+   * Applies standard damping so objects stabilise after being dropped.
    */
   public addDynamicPrimitive(
-      mesh: THREE.Object3D, 
-      type: 'box' | 'cylinder' | 'sphere', 
-      size: number[]
-  ): { body: RAPIER.RigidBody, collider: RAPIER.Collider } {
-    
-    let position = mesh.getWorldPosition(new THREE.Vector3());
-    let rotation = mesh.getWorldQuaternion(new THREE.Quaternion());
+    anchor: THREE.Object3D,
+    shape: PrimitiveShape
+  ): { body: RAPIER.RigidBody; collider: RAPIER.Collider } {
+    PhysicsSystem.flushWorldMatrix(anchor);
+    const pos = anchor.getWorldPosition(new THREE.Vector3());
+    const rot = anchor.getWorldQuaternion(new THREE.Quaternion());
 
-    const rigidBodyDesc = RAPIER.RigidBodyDesc.dynamic()
-      .setTranslation(position.x, position.y, position.z)
-      .setRotation(rotation);
+    const body = this.world.createRigidBody(
+      RAPIER.RigidBodyDesc.dynamic().setTranslation(pos.x, pos.y, pos.z).setRotation(rot)
+    );
+    body.setLinearDamping(0.5);
+    body.setAngularDamping(1.0);
 
-    const rigidBody = this.world.createRigidBody(rigidBodyDesc);
-
-    let colliderDesc: RAPIER.ColliderDesc;
-    
-    switch(type) {
-      case 'box':
-        // size: [hx, hy, hz] = half-extents
-        colliderDesc = RAPIER.ColliderDesc.cuboid(size[0], size[1], size[2]);
-        break;
-      case 'cylinder':
-        // size: [halfHeight, radius]
-        colliderDesc = RAPIER.ColliderDesc.cylinder(size[0], size[1]);
-        break;
-      case 'sphere':
-        // size: [radius]
-        colliderDesc = RAPIER.ColliderDesc.ball(size[0]);
-        break;
-      default:
-        colliderDesc = RAPIER.ColliderDesc.ball(0.5);
-    }
-
-    colliderDesc.setFriction(PHYSICS_CONFIG.friction);
-    colliderDesc.setRestitution(0.1);
-
-    const collider = this.world.createCollider(colliderDesc, rigidBody);
-    
-    // Add damping to stabilize objects and prevent infinite rolling
-    rigidBody.setLinearDamping(0.5);
-    rigidBody.setAngularDamping(1.0);
-
-    return { body: rigidBody, collider };
+    const collider = this.world.createCollider(
+      PhysicsSystem.buildPrimitiveDesc(shape)
+        .setFriction(PHYSICS_CONFIG.friction)
+        .setRestitution(0.1),
+      body
+    );
+    return { body, collider };
   }
+
+  private static buildPrimitiveDesc(shape: PrimitiveShape): RAPIER.ColliderDesc {
+    switch (shape.type) {
+      case 'box':      return RAPIER.ColliderDesc.cuboid(...shape.size);
+      case 'cylinder': return RAPIER.ColliderDesc.cylinder(...shape.size);
+      case 'sphere':   return RAPIER.ColliderDesc.ball(shape.size[0]);
+    }
+  }
+
+  // ── Cleanup ────────────────────────────────────────────────────────────────
 
   public removeBody(body: RAPIER.RigidBody): void {
     if (this.world) this.world.removeRigidBody(body);

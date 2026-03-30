@@ -1,6 +1,16 @@
 import * as THREE from 'three';
 import Chest from '../objects/Chest';
+import Skeleton from '../objects/Skeleton';
+import TikiTorch from '../objects/TikiTorch';
 import TriggerZone from '../world/TriggerZone';
+import Throne from '../objects/Throne';
+import Mirror from '../objects/Mirror';
+import GardeningHoe from '../objects/GardeningHoe';
+import Coffin from '../objects/Coffin';
+import PalmTree from '../objects/PalmTree';
+import Foliage, { FoliageType } from '../objects/Foliage';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+
 
 export type PlatformConfig = {
   index: number;
@@ -11,31 +21,61 @@ export type PlatformConfig = {
 };
 
 export default class PlatformFactory {
-  platformConfig: any;
+  private readonly platformConfig: Record<'gravel' | 'sand' | 'volcanic', {
+    textureColor: number;
+    propTypes: string[];
+  }>;
 
   constructor() {
     this.platformConfig = {
-      gravel: { textureColor: 0x8b7c6e, propTypes: ['statue', 'crate', 'anchor'] },
-      sand: { textureColor: 0xd4a574, propTypes: ['boat', 'rock', 'barrel'] },
+      gravel:   { textureColor: 0x8b7c6e, propTypes: ['statue', 'crate', 'anchor'] },
+      sand:     { textureColor: 0xd4a574, propTypes: ['boat', 'rock', 'barrel'] },
       volcanic: { textureColor: 0x3d3530, propTypes: ['crystal', 'vent', 'rock'] },
     };
   }
 
   createPlatformMesh(config: PlatformConfig) {
     const geometry = new THREE.CylinderGeometry(config.size, config.size, config.height, 32);
-    const texture = this.createTexture(config.type);
     const material = new THREE.MeshStandardMaterial({
-      map: texture,
-      color: this.platformConfig[config.type].textureColor,
       roughness: 0.8,
       metalness: 0.1,
     });
+
+    if (config.type === 'sand') {
+      material.color.setHex(0xffffff); // reset color so texture shows cleanly
+      const loader = new GLTFLoader();
+      loader.load('models/sand/stylized_beach_sand.glb', (gltf) => {
+        let foundTexture: THREE.Texture | undefined = undefined;
+        gltf.scene.traverse((child) => {
+          if ((child as THREE.Mesh).isMesh) {
+            const m = (child as THREE.Mesh).material as THREE.MeshStandardMaterial;
+            if (m && m.map && !foundTexture) {
+              foundTexture = m.map;
+            }
+          }
+        });
+        if (foundTexture) {
+          const tex = foundTexture as THREE.Texture;
+          tex.colorSpace = THREE.SRGBColorSpace;
+          tex.wrapS = THREE.RepeatWrapping;
+          tex.wrapT = THREE.RepeatWrapping;
+          tex.repeat.set(8, 8);
+          material.map = tex;
+          material.needsUpdate = true;
+        }
+      });
+    } else {
+      material.map = this.createTexture(config.type);
+      material.color.setHex(this.platformConfig[config.type].textureColor);
+    }
+
     const mesh = new THREE.Mesh(geometry, material);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     (mesh as any).userData = { type: 'platform', platformConfig: config };
     return mesh;
   }
+
 
   createTexture(type: string) {
     const canvas = document.createElement('canvas');
@@ -207,13 +247,97 @@ export default class PlatformFactory {
     return button;
   }
  
-  createChest(position: THREE.Vector3, contents: any = null) {
-    const chest = new Chest(contents);
+  createChest(position: THREE.Vector3, contents: any = null, persistentId: string = '') {
+    const chest = new Chest(contents, persistentId);
     chest.mesh.position.copy(position);
     return chest;
   }
- 
+
+  createSkeleton(position: THREE.Vector3, isBones: boolean = false, hasCrown: boolean = true, persistentId: string = '') {
+    const skeleton = new Skeleton(isBones, hasCrown, persistentId);
+    skeleton.mesh.position.copy(position);
+    return skeleton;
+  }
+
+  createTikiTorch(position: THREE.Vector3, persistentId: string = '') {
+    const torch = new TikiTorch(persistentId);
+    torch.mesh.position.copy(position);
+    return torch;
+  }
+
   createTriggerZone(position: THREE.Vector3, radius: number = 2.0, color: number = 0x00ff00) {
     return new TriggerZone(position, radius, color);
+  }
+
+  createThrone(position: THREE.Vector3, persistentId: string = '') {
+    const throne = new Throne(persistentId);
+    throne.mesh.position.copy(position);
+    return throne;
+  }
+
+  createPalmTree(position: THREE.Vector3, variationIndex?: number) {
+    const palmTree = new PalmTree(variationIndex);
+    palmTree.mesh.position.copy(position);
+    return palmTree;
+  }
+
+  createFoliage(type: FoliageType, position: THREE.Vector3, variationIndex?: number) {
+    const foliage = new Foliage(type, variationIndex);
+    foliage.mesh.position.copy(position);
+    return foliage;
+  }
+
+  createBush(position: THREE.Vector3) {
+    const bushGeo = new THREE.SphereGeometry(0.5, 8, 8);
+    const bushMat = new THREE.MeshStandardMaterial({ color: 0x1b5e20 });
+    const bush = new THREE.Mesh(bushGeo, bushMat);
+    bush.position.copy(position);
+    bush.scale.set(1.2, 0.8, 1.2);
+    return bush;
+  }
+
+  createRock(position: THREE.Vector3, scale: number = 1.0) {
+    const rockGeo = new THREE.DodecahedronGeometry(0.5, 0);
+    const rockMat = new THREE.MeshStandardMaterial({ color: 0x616161, roughness: 0.9 });
+    const rock = new THREE.Mesh(rockGeo, rockMat);
+    rock.position.copy(position);
+    rock.scale.set(scale, scale * 0.8, scale);
+    rock.rotation.set(Math.random(), Math.random(), Math.random());
+    return rock;
+  }
+
+  createMirror(position: THREE.Vector3, persistentId: string = '') {
+    const mirror = new Mirror(persistentId);
+    mirror.mesh.position.copy(position);
+    return mirror;
+  }
+
+  createGardeningHoe(position: THREE.Vector3, persistentId: string = '') {
+    const hoe = new GardeningHoe(persistentId);
+    hoe.mesh.position.copy(position);
+    return hoe;
+  }
+
+  createCoffin(position: THREE.Vector3, persistentId: string = '') {
+    const coffin = new Coffin(persistentId);
+    coffin.mesh.position.copy(position);
+    return coffin;
+  }
+
+  createRedX(position: THREE.Vector3, _persistentId: string = '') {
+    const group = new THREE.Group();
+    const mat = new THREE.MeshBasicMaterial({ color: 0xaa0000 });
+    const geo = new THREE.BoxGeometry(1, 0.05, 0.2);
+    
+    const bar1 = new THREE.Mesh(geo, mat);
+    bar1.rotation.y = Math.PI / 4;
+    group.add(bar1);
+    
+    const bar2 = new THREE.Mesh(geo, mat);
+    bar2.rotation.y = -Math.PI / 4;
+    group.add(bar2);
+    
+    group.position.copy(position);
+    return group;
   }
 }

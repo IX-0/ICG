@@ -1,0 +1,11 @@
+Model Information:
+* title:	Old Chest
+* source:	https://sketchfab.com/3d-models/old-chest-1fd4c297f4074fa19177d1aa64b36df2
+* author:	Gwappa (https://sketchfab.com/Gwappa)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "Old Chest" (https://sketchfab.com/3d-models/old-chest-1fd4c297f4074fa19177d1aa64b36df2) by Gwappa (https://sketchfab.com/Gwappa) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)

@@ -15,6 +15,9 @@ export default class EnvironmentManager {
   // Three tiers of stars for varied, uneven sizes
   private starTiers: THREE.Points[] = [];
   private currentMoonPhase: string = 'Cycle';
+  
+  private _currentFogDensity: number = ENV_CONFIG.fog.dayDensity;
+  private _currentFogColor: THREE.Color = new THREE.Color(ENV_CONFIG.fog.dayColor);
 
   constructor(scene: THREE.Scene, camera: THREE.Camera) {
     this.scene = scene;
@@ -99,14 +102,35 @@ export default class EnvironmentManager {
 
     const cfg = ENV_CONFIG;
 
-    if (this.scene.fog) {
+    if (this.scene.fog && this.lighting) {
       const fog = this.scene.fog as THREE.FogExp2;
-      fog.color.lerpColors(
-        new THREE.Color(cfg.fog.dayColor),
-        new THREE.Color(cfg.fog.nightColor),
-        nightFactor
-      );
-      fog.density = THREE.MathUtils.lerp(cfg.fog.dayDensity, cfg.fog.nightDensity, nightFactor);
+      
+      const targetColor = this.lighting.fogOverrideColor !== null 
+        ? new THREE.Color(this.lighting.fogOverrideColor as any) 
+        : new THREE.Color(cfg.fog.dayColor).lerp(new THREE.Color(cfg.fog.nightColor), nightFactor);
+        
+      const targetDensity = this.lighting.fogOverrideDensity !== null 
+        ? this.lighting.fogOverrideDensity 
+        : THREE.MathUtils.lerp(cfg.fog.dayDensity, cfg.fog.nightDensity, nightFactor);
+      
+      // Smooth Transition (Lerp)
+      const lerpSpeed = 0.005; // Slower for cinematic feel
+      this._currentFogDensity = THREE.MathUtils.lerp(this._currentFogDensity, targetDensity, lerpSpeed);
+      this._currentFogColor.lerp(targetColor, lerpSpeed);
+
+      fog.color.copy(this._currentFogColor);
+      fog.density = this._currentFogDensity;
+
+      // Immersive Fog Fix: Hide the Sky and Moon when the mist is thick
+      // We use a smoothed threshold for visibility
+      const isFoggyOverride = this._currentFogDensity > 0.05;
+      if (isFoggyOverride) {
+        if (this.sky) this.sky.visible = false;
+        this.scene.background = fog.color;
+      } else {
+        if (this.sky) this.sky.visible = true;
+        this.scene.background = null;
+      }
     }
 
     // Moon at 800 units in the moon direction

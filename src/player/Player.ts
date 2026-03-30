@@ -8,8 +8,12 @@ import { PLAYER_CONFIG } from '../config/PlayerConfig';
 import { physicsSystem } from '../engine/PhysicsSystem';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { IUpdatable } from '../interfaces/IUpdatable';
+import { IPersistent } from '../interfaces/IPersistent';
+import { IPlayerState } from '../interfaces/IState';
 
-export default class Player implements IUpdatable {
+export default class Player implements IUpdatable, IPersistent {
+  public persistentId: string = 'player_main';
+
   camera: THREE.PerspectiveCamera;
   public scene: THREE.Scene;
   public position: THREE.Vector3;
@@ -51,7 +55,7 @@ export default class Player implements IUpdatable {
     this.camera = camera;
     this.baseFov = camera.fov;
     this.domElement = domElement;
-    this.position = new THREE.Vector3(0, PLAYER_CONFIG.height + 0.5, 0);
+    this.position = new THREE.Vector3(0, PLAYER_CONFIG.height + 0.5, 8);
     this.velocity = new THREE.Vector3();
     this.camera.position.copy(this.position);
 
@@ -367,4 +371,28 @@ export default class Player implements IUpdatable {
   }
 
   getIsLocked(): boolean { return this.isLocked; }
+
+  public saveState(): IPlayerState {
+    return {
+      position: { x: this.position.x, y: this.position.y, z: this.position.z },
+      targetYaw: this.targetYaw,
+      targetPitch: this.targetPitch,
+      heldItemId: (this.heldItem as any)?.persistentId || null
+    };
+  }
+
+  public loadState(state: IPlayerState): void {
+    // 1. Sync camera angles
+    this.targetYaw = this.currentYaw = state.targetYaw;
+    this.targetPitch = this.currentPitch = state.targetPitch;
+    this.camera.rotation.set(this.currentPitch, this.currentYaw, 0, 'YXZ');
+
+    // 2. Teleport
+    const pos = new THREE.Vector3(state.position.x, state.position.y, state.position.z);
+    this.setPosition(pos.x, pos.y, pos.z);
+    if (this.playerBody) {
+      this.playerBody.setTranslation(pos, true);
+    }
+  }
 }
+

@@ -1,14 +1,19 @@
 import * as THREE from 'three';
 import { Grabbable } from './Grabbable';
+import { IPersistent } from '../interfaces/IPersistent';
+import { IObjectState } from '../interfaces/IState';
 import TikiTorch from './TikiTorch';
 import { physicsSystem } from '../engine/PhysicsSystem';
 
-export default class WaterBucket extends Grabbable {
-  public mesh: THREE.Group;
+export default class WaterBucket extends Grabbable implements IPersistent {
+  public persistentId: string = '';
 
-  constructor() {
+  private savedLinvel: any = null;
+  private savedAngvel: any = null;
+
+  constructor(persistentId: string = '') {
     super();
-    this.mesh = new THREE.Group();
+    this.persistentId = persistentId;
     
     // Custom hold positioning
     this.holdPosition.set(0.4, -0.6, -1.0);
@@ -43,10 +48,42 @@ export default class WaterBucket extends Grabbable {
     this.mesh.userData = { grabbable: true, instance: this };
   }
 
+  public saveState(): IObjectState {
+    const state: IObjectState = {
+      position: { x: this.mesh.position.x, y: this.mesh.position.y, z: this.mesh.position.z },
+      rotation: { x: this.mesh.rotation.x, y: this.mesh.rotation.y, z: this.mesh.rotation.z },
+      isHeld: this.isHeld
+    };
+    if (this.rigidBody) {
+      const linvel = this.rigidBody.linvel();
+      const angvel = this.rigidBody.angvel();
+      state.linearVelocity = { x: linvel.x, y: linvel.y, z: linvel.z };
+      state.angularVelocity = { x: angvel.x, y: angvel.y, z: angvel.z };
+    }
+    return state;
+  }
+
+  public loadState(state: IObjectState): void {
+    this.mesh.position.set(state.position.x, state.position.y, state.position.z);
+    this.mesh.rotation.set(state.rotation.x, state.rotation.y, state.rotation.z);
+    if (state.linearVelocity) this.savedLinvel = state.linearVelocity;
+    if (state.angularVelocity) this.savedAngvel = state.angularVelocity;
+    this.isHeld = state.isHeld || false;
+  }
+
   public initPhysics(): void {
-    const { body, collider } = physicsSystem.addDynamicPrimitive(this.mesh, 'cylinder', [0.25, 0.3]);
+    const { body, collider } = physicsSystem.addDynamicPrimitive(this.mesh, { type: 'cylinder', size: [0.25, 0.3] });
     this.rigidBody = body;
     this.collider = collider;
+
+    if (this.savedLinvel) {
+      this.rigidBody.setLinvel(this.savedLinvel, true);
+      this.savedLinvel = null;
+    }
+    if (this.savedAngvel) {
+      this.rigidBody.setAngvel(this.savedAngvel, true);
+      this.savedAngvel = null;
+    }
   }
 
   public onGrab(): void {
@@ -64,15 +101,10 @@ export default class WaterBucket extends Grabbable {
     }
   }
 
-  public onUse(): void {
-    // WaterBucket doesn't have an innate action unless it hits something.
-    // The GameEngine handles rays directly or we could trigger particle effects here later.
-  }
-
-  public tryExtinguish(target: THREE.Object3D): void {
-    const instance = target.userData?.instance;
-    if (instance instanceof TikiTorch) {
-      instance.setLit(false);
+  public onUse(target?: any): void {
+    if (target instanceof TikiTorch) {
+      target.setLit(false);
     }
   }
+
 }

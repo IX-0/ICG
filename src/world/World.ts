@@ -5,21 +5,22 @@ import EnvironmentManager from './EnvironmentManager';
 import InteractionManager from './InteractionManager';
 import LightingSystem from './LightingSystem';
 import WaterSystem from './WaterSystem';
-import GameState from '../state/GameState';
+import StateManager from '../engine/StateManager';
 import Player from '../player/Player';
-import { PORTAL_CONFIG } from '../config/PortalConfig';
-import { physicsSystem } from '../engine/PhysicsSystem';
 import PuzzleManager from './PuzzleManager';
-import { SequentialPuzzle } from '../puzzles/SequentialPuzzle';
-import { TorchExplorationStage, TorchPositioningStage, TorchRiteStage } from '../puzzles/TorchRitualPuzzle';
-import Lighter from '../objects/Lighter';
-import TikiTorch from '../objects/TikiTorch';
+import Crown from '../objects/Crown';
 import TriggerZone from './TriggerZone';
+import { IslandContext } from './islands/IslandContext';
+import { setupRiseIsland } from './islands/RiseIsland';
+import { setupIsolationIsland } from './islands/IsolationIsland';
+import { setupReturnIsland } from './islands/ReturnIsland';
+import { setupTragedyIsland } from './islands/TragedyIsland';
+
 
 export default class World {
   scene: THREE.Scene;
   camera: THREE.Camera;
-  gameState: GameState;
+  stateManager: StateManager;
   platformManager: PlatformManager;
   portalSystem: PortalSystem;
   environment: EnvironmentManager;
@@ -31,10 +32,10 @@ export default class World {
   private activeZones: TriggerZone[] = [];
   private puzzleObjects: any[] = [];
 
-  constructor(scene: THREE.Scene, camera: THREE.Camera, gameState: GameState) {
+  constructor(scene: THREE.Scene, camera: THREE.Camera, stateManager: StateManager) {
     this.scene = scene;
     this.camera = camera;
-    this.gameState = gameState;
+    this.stateManager = stateManager;
 
     this.lighting = new LightingSystem(scene);
     this.lighting.setSunTime(14); 
@@ -45,7 +46,7 @@ export default class World {
     this.environment = new EnvironmentManager(scene, camera);
     this.environment.setup(this.lighting);
 
-    this.platformManager = new PlatformManager(scene, gameState);
+    this.platformManager = new PlatformManager(scene, stateManager);
     this.portalSystem = new PortalSystem(scene, camera);
     this.puzzleManager = new PuzzleManager();
  
@@ -54,93 +55,84 @@ export default class World {
     this.loadPlatform(0);
   }
 
-  public loadPlatform(platformIndex: number) {
+  public loadPlatform(platformIndex: number, offset: THREE.Vector3 = new THREE.Vector3(0, 0, 0)) {
     this.platformManager.clearPlatforms();
-    
-    // Clear previous puzzle objects
     this.puzzleObjects.forEach(obj => {
-      this.scene.remove(obj.mesh);
-      this.interaction.unregisterInteractive(obj.mesh);
+      if (obj.cleanupPhysics) obj.cleanupPhysics();
+      if (obj.mesh) {
+        this.scene.remove(obj.mesh);
+        this.interaction.unregisterInteractive(obj.mesh);
+      }
     });
-    this.activeZones.forEach(z => this.scene.remove(z.mesh));
 
-    const platform = this.platformManager.createPlatform(platformIndex);
+    const platform = this.platformManager.createPlatform(platformIndex, offset);
     this.currentPlatform = platform;
     this.activeZones = [];
-    this.puzzleObjects = [];
+    this.puzzleObjects = platform ? [...platform.objects] : [];
     
-    if (platformIndex === 0) {
-      this._setupTorchRitual();
+    if (platform) {
+      const ctx = this._createContext(platform, offset);
+      if (platformIndex === 0) setupRiseIsland(ctx);
+      else if (platformIndex === 1) setupIsolationIsland(ctx);
+      else if (platformIndex === 2) setupReturnIsland(ctx);
+      else if (platformIndex === 3) setupTragedyIsland(ctx);
     }
     
     return platform;
   }
  
-  private _setupTorchRitual(): void {
-    const platform = this.currentPlatform;
-    if (!platform) return;
+  private _createContext(platform: any, offset: THREE.Vector3): IslandContext {
+    return {
+      scene: this.scene,
+      platform,
+      offset,
+      lighting: this.lighting,
+      portalSystem: this.portalSystem,
+      interaction: this.interaction,
+      puzzleManager: this.puzzleManager,
+      stateManager: this.stateManager,
+      platformManager: this.platformManager,
+      factory: this.platformManager.factory,
+      puzzleObjects: this.puzzleObjects,
+      activeZones: this.activeZones,
+      addPuzzleObject: (obj: any) => this.addPuzzleObject(obj),
+      removePuzzleObject: (obj: any) => {
+        this.puzzleObjects = this.puzzleObjects.filter(o => o !== obj);
+        if (obj.mesh) this.interaction.unregisterInteractive(obj.mesh);
+      },
+      addStaticMesh: (mesh: THREE.Object3D) => {
+        this.scene.add(mesh);
+        this.platformManager.activePlatforms.push(mesh);
+      },
+      loadObjectState: (obj: any) => this._loadObjectState(obj),
+      spawnCrown: (id: string, pos?: THREE.Vector3) => this._spawnCrown(id, pos),
+      onTransition: (nextIndex: number, oldPlat: any, newPlat: any) => {
+        const oldObjects = oldPlat.objects;
+        this.puzzleObjects = this.puzzleObjects.filter(o => !oldObjects.includes(o));
+        oldObjects.forEach((o: any) => {
+          if (o.mesh) this.interaction.unregisterInteractive(o.mesh);
+        });
+        this.platformManager.removePlatform(oldPlat.mesh);
+        this.currentPlatform = newPlat;
+        this.portalSystem.clearPortals();
 
-    // 1. Create 3 Sockets (TriggerZones)
-    const zones: TriggerZone[] = [
-      this.platformManager.factory.createTriggerZone(new THREE.Vector3(-8, 1.0, -8), 2.5, 0x00ffaa),
-      this.platformManager.factory.createTriggerZone(new THREE.Vector3(8, 1.0, -8), 2.5, 0x00ffaa),
-      this.platformManager.factory.createTriggerZone(new THREE.Vector3(0, 1.0, -12), 2.5, 0x00ffaa)
-    ];
-    zones.forEach(z => {
-      this.scene.add(z.mesh);
-      this.activeZones.push(z);
-    });
- 
-    // 2. Spawn 3 initial Torches on the ground to be moved
-    for (let i = 0; i < 3; i++) {
-      const torch = new TikiTorch();
-      torch.mesh.position.set(-5 + i * 5, 1.1, 0);
-      this.scene.add(torch.mesh);
-      this.platformManager.activePlatforms.push(torch.mesh);
-      this.puzzleObjects.push(torch);
-      this.interaction.registerInteractive(torch.mesh);
-      // We'll need to call initPhysics later if not running, but World handles it
+        const ctx = this._createContext(newPlat, newPlat.offset || new THREE.Vector3());
+        if (nextIndex === 1) setupIsolationIsland(ctx);
+        else if (nextIndex === 2) setupReturnIsland(ctx);
+        else if (nextIndex === 3) setupTragedyIsland(ctx);
+      }
+    };
+  }
+
+  private _loadObjectState(obj: any): boolean {
+    if (obj.persistentId && obj.loadState) {
+      const state = this.stateManager.getObjectState(obj.persistentId);
+      if (state) {
+        obj.loadState(state);
+        return true;
+      }
     }
-
-    // 3. Create the Puzzle Stages
-    const stage1 = new TorchExplorationStage(() => {}); 
-    const stage2 = new TorchPositioningStage(zones);
-    const stage3 = new TorchRiteStage(zones);
-
-    // 4. Create the Chest with the Lighter inside
-    const chest = this.platformManager.factory.createChest(new THREE.Vector3(0, 0, 8), 'lighter');
-    chest.onOpen = () => {
-      const lighter = new Lighter();
-      lighter.mesh.position.set(0, 1.0, 8); // spawn above chest
-      this.scene.add(lighter.mesh);
-      this.puzzleObjects.push(lighter);
-      this.interaction.registerInteractive(lighter.mesh);
-      lighter.initPhysics();
-      stage1.setFinished(); // completes exploration
-    };
-    this.scene.add(chest.mesh);
-    this.puzzleObjects.push(chest);
-    this.interaction.registerInteractive(chest.mesh);
-    // REMOVED: chest.initPhysics(); 
-    // This is now handled globally in this.initPhysics() after Rapier is ready.
-
-    const puzzle = new SequentialPuzzle('torch-ritual', [stage1, stage2, stage3]);
-    puzzle.onAllStagesComplete = () => {
-      console.log('Torch Ritual Complete! Spawning Portal...');
-      this.portalSystem.addPortalPair(
-        new THREE.Vector3(0, 3.0, -15), new THREE.Euler(0, 0, 0), PORTAL_CONFIG.colorA,
-        new THREE.Vector3(80, 3.0, 0), new THREE.Euler(0, Math.PI/2, 0), PORTAL_CONFIG.colorB,
-        PORTAL_CONFIG.width, PORTAL_CONFIG.height,
-        (isPlayer) => {
-          if (isPlayer) {
-            console.log('Player traversed the ritual portal!');
-            // Optional: this.portalSystem.clearPortals(); or transition
-          }
-        }
-      );
-    };
-
-    this.puzzleManager.setActivePuzzle(puzzle);
+    return false;
   }
 
   public transitionPlatform(nextPlatformIndex: number): void {
@@ -150,7 +142,6 @@ export default class World {
   public initPhysics(): void {
     this.platformManager.initPhysics();
     this.portalSystem.initPhysics();
-    // Re-init for puzzle objects
     this.puzzleObjects.forEach(obj => {
        if (obj.initPhysics) obj.initPhysics();
     });
@@ -173,4 +164,46 @@ export default class World {
 
   public getCurrentPlatform() { return this.currentPlatform; }
   public getEnvironment() { return this.environment; }
+  
+  public getPersistentObjects(): any[] {
+    const persistent: any[] = [];
+    
+    this.puzzleObjects.forEach(obj => {
+      if (obj && typeof obj.saveState === 'function') {
+        persistent.push(obj);
+      }
+    });
+
+    this.platformManager.activePlatforms.forEach(mesh => {
+      const instance = (mesh as any).userData?.instance;
+      if (instance && typeof instance.saveState === 'function' && !persistent.includes(instance)) {
+        persistent.push(instance);
+      }
+    });
+
+    return persistent;
+  }
+
+  public addPuzzleObject(obj: any): void {
+    if (!this.puzzleObjects.includes(obj)) {
+      this.puzzleObjects.push(obj);
+      if (obj.mesh) {
+        this.interaction.registerInteractive(obj.mesh);
+      }
+    }
+  }
+
+  private _spawnCrown(id: string, position?: THREE.Vector3): Crown {
+    const crown = new Crown();
+    crown.persistentId = id;
+    if (!this._loadObjectState(crown)) {
+      if (position) crown.mesh.position.copy(position);
+      else crown.mesh.position.set(5.2, 0.5, 5.2);
+    }
+    this.scene.add(crown.mesh);
+    this.puzzleObjects.push(crown);
+    this.interaction.registerInteractive(crown.mesh);
+    crown.initPhysics();
+    return crown;
+  }
 }

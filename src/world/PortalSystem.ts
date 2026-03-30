@@ -317,10 +317,12 @@ export default class PortalSystem implements IPortalSystem {
 
   public clearPortals(): void {
     for (const p of this.portals) {
+      p.dispose();                 // removes rigid body + render target
       this.scene.remove(p.mesh);
     }
     this.portals = [];
   }
+
 
   // Legacy method matching previous stub if needed
   createPortal(): void { }

@@ -198,4 +198,17 @@ export default class Portal implements IPortal {
   public updateWorldMatrix(): void {
     this.mesh.updateMatrixWorld(true);
   }
+
+  /**
+   * Removes the physics body and disposes GPU resources.
+   * Call this before removing the portal from the scene.
+   */
+  public dispose(): void {
+    if (this.rigidBody) {
+      physicsSystem.removeBody(this.rigidBody);
+      this.rigidBody = null;
+    }
+    this.renderTarget.dispose();
+  }
 }
+

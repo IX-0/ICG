@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import World from '../world/World';
 import Player from '../player/Player';
-import UIManager from '../ui/UIManager';
-import GameState from '../state/GameState';
+import UIManager from './UIManager';
+import StateManager from './StateManager';
 import { ENV_CONFIG } from '../config/EnvironmentConfig';
 import DebugManager from './DebugManager';
 import TikiTorch from '../objects/TikiTorch';
@@ -24,7 +24,7 @@ export default class GameEngine implements IGameController {
   world: World;
   player: Player;
   ui: UIManager;
-  gameState: GameState;
+  stateManager: StateManager;
   debugManager: DebugManager;
 
   private lastTime: number = 0;
@@ -53,8 +53,8 @@ export default class GameEngine implements IGameController {
     this.camera.layers.enable(2);
     this.scene.add(this.camera);
 
-    this.gameState = new GameState();
-    this.world = new World(this.scene, this.camera, this.gameState);
+    this.stateManager = new StateManager();
+    this.world = new World(this.scene, this.camera, this.stateManager);
     this.player = new Player(this.scene, this.camera, this.renderer.domElement);
     this.ui = new UIManager(this.renderer, this);
     this.debugManager = new DebugManager(this.scene, this.world.lighting);
@@ -91,9 +91,31 @@ export default class GameEngine implements IGameController {
 
   public async init(): Promise<void> {
     await physicsSystem.init();
+    
     // After physics is initialized, let the world init any physics bodies it needs
     this.world.initPhysics();
     this.player.initPhysics();
+
+    // ---- Load Persistence ----
+    const savedPlayer = this.stateManager.playerState;
+    if (savedPlayer) {
+      console.log('Restoring player state...');
+      this.player.loadState(savedPlayer);
+
+      // Re-attach held item if any
+      if (savedPlayer.heldItemId) {
+        // Search in grabbables or interactables
+        const items = [
+          ...this.grabbables, 
+          ...this.world.getPersistentObjects()
+        ];
+        const target = items.find((i: any) => i && (i as any).persistentId === savedPlayer.heldItemId);
+        if (target) {
+          console.log(`Re-grabbing item: ${savedPlayer.heldItemId}`);
+          this.player.grab(target);
+        }
+      }
+    }
   }
 
   public spawnPortalPair(): void {
@@ -123,6 +145,25 @@ export default class GameEngine implements IGameController {
       posB, rotB, PORTAL_CONFIG.colorB,
       PORTAL_CONFIG.width, PORTAL_CONFIG.height
     );
+  }
+
+  public saveGame(): void {
+    console.log('Saving game progress...');
+    
+    // 1. Save all persistent objects on the current platform
+    const persistentObjects = [
+      ...this.grabbables,
+      ...this.interactables,
+      ...this.world.getPersistentObjects()
+    ].filter(obj => obj && obj.persistentId && typeof obj.saveState === 'function');
+
+    persistentObjects.forEach(obj => {
+      this.stateManager.updateObjectState(obj.persistentId, obj.saveState());
+    });
+
+    // 2. Save player state and commit to storage
+    const playerState = this.player.saveState();
+    this.stateManager.saveToStorage(playerState);
   }
 
   public toggleDebug(item: string, visible: boolean): void {
@@ -162,87 +203,75 @@ export default class GameEngine implements IGameController {
     const player = this.player;
     if (player.heldItem) {
       const item = player.heldItem;
-      player.drop(); // Player.ts detaches and sets initial world position/velocity
-
+      player.drop();
       this.scene.add(item.mesh);
       this.world.interaction.registerInteractive(item.mesh);
-    } else {
-      const hit = this.world.interaction.raycastFromCamera();
-      if (hit) {
-        // Traverse up to find grabbable or interactable parent
-        let obj: THREE.Object3D | null = hit.object;
-        let targetObj: THREE.Object3D | null = null;
-        let isGrabbable = false;
-        let isInteractable = false;
-
-        while (obj) {
-          if (obj.userData?.grabbable) {
-            targetObj = obj;
-            isGrabbable = true;
-            break;
-          }
-          if (obj.userData?.interactable) {
-            targetObj = obj;
-            isInteractable = true;
-            break;
-          }
-          obj = obj.parent;
-        }
-
-        if (targetObj) {
-          const instance = targetObj.userData.instance;
-          if (isGrabbable && instance) {
-            player.grab(instance);
-            this.world.interaction.unregisterInteractive(targetObj);
-          } else if (isInteractable && instance) {
-            instance.onInteract(player, player.heldItem);
-          }
-        }
-      }
+      return;
     }
+
+    const hit = this.world.interaction.raycastFromCamera();
+    if (!hit) return;
+
+    // Check for a grabbable first
+    let grabObj: THREE.Object3D | null = hit.object;
+    while (grabObj) {
+      if (grabObj.userData?.grabbable && grabObj.userData.instance) {
+        player.grab(grabObj.userData.instance);
+        this.world.interaction.unregisterInteractive(grabObj);
+        return;
+      }
+      grabObj = grabObj.parent;
+    }
+
+    // Fallback: non-grabbable interactable (e.g. Skeleton)
+    const resolved = this.world.interaction.resolveInteractable(hit);
+    if (resolved) resolved.instance.onInteract(player, player.heldItem);
   }
 
   private _handleUse(): void {
-    if (this.player.heldItem) {
-      this.player.heldItem.onUse();
+    const player = this.player;
+    const hit = this.world.interaction.raycastFromCamera();
 
-      // If holding a lighter or water bucket, check for nearby objects
-      if (this.player.heldItem instanceof Lighter || this.player.heldItem instanceof WaterBucket) {
-        const hit = this.world.interaction.raycastFromCamera();
-        if (hit) {
-          // Traverse up for target
-          let obj: THREE.Object3D | null = hit.object;
-          while (obj) {
-            if (obj.userData?.instance instanceof TikiTorch) {
-              if (this.player.heldItem instanceof Lighter) {
-                this.player.heldItem.tryIgnite(obj);
-              } else if (this.player.heldItem instanceof WaterBucket) {
-                this.player.heldItem.tryExtinguish(obj);
-              }
-              break;
-            }
-            obj = obj.parent;
-          }
-        }
+    // If looking at an interactable world object, interact with it
+    if (hit) {
+      const resolved = this.world.interaction.resolveInteractable(hit);
+      if (resolved) {
+        console.log(`Interacting with: ${resolved.object.userData.type ?? 'object'}`);
+        resolved.instance.onInteract(player, player.heldItem);
+        return;
       }
+    }
+
+    // Otherwise use the held item, passing the hit target for context-sensitive use
+    if (player.heldItem) {
+      const hitTarget = hit ? this.world.interaction.resolveInteractable(hit) : null;
+      player.heldItem.onUse(hitTarget?.instance ?? null);
     }
   }
 
+
   public spawnObject(type: string): void {
+    const persistentId = `dynamic_${type}_${Date.now()}`;
+
     if (type === 'chest') {
-      const chest = new Chest();
-      // position 2 units away, looking flat on the ground
-      const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.player.camera.quaternion);
-      forward.y = 0;
-      if (forward.lengthSq() > 0) forward.normalize();
-      else forward.set(0, 0, -1);
+      const chest = new Chest(null, persistentId);
+      
+      // Check for saved state
+      const savedState = this.stateManager.getObjectState(persistentId);
+      if (savedState) {
+        chest.loadState(savedState);
+      } else {
+        // Default spawn logic
+        const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.player.camera.quaternion);
+        forward.y = 0;
+        if (forward.lengthSq() > 0) forward.normalize();
+        else forward.set(0, 0, -1);
 
-      const spawnPos = this.player.position.clone().add(forward.multiplyScalar(2));
-      spawnPos.y = 0.5; // ground
-      chest.mesh.position.copy(spawnPos);
-
-      // Face player (since normal chest front is Z facing, lookAt point makes its front face that point)
-      chest.mesh.lookAt(this.player.position.x, 0.5, this.player.position.z);
+        const spawnPos = this.player.position.clone().add(forward.multiplyScalar(2));
+        spawnPos.y = 0.5; // ground
+        chest.mesh.position.copy(spawnPos);
+        chest.mesh.lookAt(this.player.position.x, 0.5, this.player.position.z);
+      }
 
       this.scene.add(chest.mesh);
       this.world.interaction.registerInteractive(chest.mesh);
@@ -267,18 +296,24 @@ export default class GameEngine implements IGameController {
     }
 
     let obj: any = null;
-    if (type === 'torch') obj = new TikiTorch();
-    else if (type === 'lighter') obj = new Lighter();
-    else if (type === 'bucket') obj = new WaterBucket();
+    if (type === 'torch') obj = new TikiTorch(persistentId);
+    else if (type === 'lighter') obj = new Lighter(persistentId);
+    else if (type === 'bucket') obj = new WaterBucket(persistentId);
     else if (type === 'crown') obj = new Crown();
     else if (type === 'hoe') obj = new GardeningHoe();
     if (!obj) return;
 
-    // Spawn 2 units in front of player at height of player
-    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.player.camera.quaternion);
-    const spawnPos = this.player.camera.position.clone().add(forward.multiplyScalar(2));
-    if (type === 'torch') spawnPos.y = 1.1; // Place at ground height
-    obj.mesh.position.copy(spawnPos);
+    // Check for saved state for these dynamic objects
+    const savedState = this.stateManager.getObjectState(persistentId);
+    if (savedState) {
+      obj.loadState(savedState);
+    } else {
+      // Spawn 2 units in front of player
+      const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.player.camera.quaternion);
+      const spawnPos = this.player.camera.position.clone().add(forward.multiplyScalar(2));
+      if (type === 'torch') spawnPos.y = 1.1; // Place at ground height
+      obj.mesh.position.copy(spawnPos);
+    }
 
     this.scene.add(obj.mesh);
     this.world.interaction.registerInteractive(obj.mesh);
@@ -362,8 +397,29 @@ export default class GameEngine implements IGameController {
   }
 
   transitionToNextPlatform(): void {
-    this.gameState.moveToNextPlatform();
-    this.world.transitionPlatform(this.gameState.currentPlatformIndex);
+    this.stateManager.moveToNextPlatform();
+    this.world.transitionPlatform(this.stateManager.global.currentPlatformIndex);
+  }
+
+  public jumpToPlatform(index: number): void {
+    console.log(`Jumping to platform ${index}...`);
+    this.world.loadPlatform(index);
+    // Reposition player slightly back from the center to avoid being stuck in props
+    this.player.setPosition(0, 1.6, 8);
+  }
+
+  public spawnExtraTorch(): void {
+    console.log("Spawning extra torch (simulating bringing it from Isolation)...");
+    const torch = new TikiTorch(`prop_torch_isolation_extra`);
+    // Spawn in front of player
+    const forward = this.player.getDirection();
+    const spawnPos = this.player.camera.position.clone().add(forward.multiplyScalar(2));
+    spawnPos.y = 1.1; 
+    torch.mesh.position.copy(spawnPos);
+    
+    this.scene.add(torch.mesh);
+    this.world.addPuzzleObject(torch);
+    torch.initPhysics();
   }
 }
 

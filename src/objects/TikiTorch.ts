@@ -1,49 +1,132 @@
 import * as THREE from 'three';
 import { Grabbable } from './Grabbable';
+import { IPersistent } from '../interfaces/IPersistent';
+import { IObjectState } from '../interfaces/IState';
 import { physicsSystem } from '../engine/PhysicsSystem';
 
-export default class TikiTorch extends Grabbable {
-  public mesh: THREE.Group;
+export default class TikiTorch extends Grabbable implements IPersistent {
+  public persistentId: string = '';
 
   private isLit: boolean = false;
-  private flame: THREE.Mesh | null = null;
+  private modelFlameParts: THREE.Object3D[] = [];
   private light: THREE.PointLight | null = null;
+  private mixer: THREE.AnimationMixer | null = null;
+  private flameActions: THREE.AnimationAction[] = [];
+  private isModelReady: boolean = false;
 
-  constructor() {
+  constructor(persistentId: string = '') {
     super();
-    this.mesh = new THREE.Group();
+    this.persistentId = persistentId;
+    this.modelPath = 'models/tiki_torch/tiki_torch.glb';
     
-    // Custom hold positioning
+    // Custom hold positioning for the new model
     this.holdPosition.set(0.6, -0.8, -1.5);
     this.holdRotation.set(0.3, -0.1, 0); 
     this.placementYOffset = 1.15;
 
-    // Visual model centered at origin so it matches the physics cylinder
-    // Base height -1.1 to top height +1.1 (total 2.2)
+    this.mesh.userData = { grabbable: true, interactable: true, instance: this };
+    this.loadModel();
+  }
+
+  /** 
+   * Required for InteractionManager to find this instance when looked at.
+   * Torches do not have a direct hand-interaction (like opening) but can be 
+   * targeting targets for items (like Lighter). 
+   */
+  public onInteract(_player: any, heldItem: any): void {
+    // GameEngine._handleUse returns early after calling onInteract, so lighter.onUse(torch)
+    // is never reached. We handle torch lighting here directly instead.
+    if (heldItem && typeof heldItem.setIgnited === 'function') {
+      // Held item is a lighter — light the torch and trigger the lighter's flame
+      this.setLit(true);
+      heldItem.setIgnited(true);
+    }
+  }
+
+  protected override async onModelLoaded(model: THREE.Group): Promise<void> {
+    model.scale.setScalar(1.0); // Reset or adjust scale if needed
+    this.mesh.updateWorldMatrix(true, true);
+
+    if (this.animations.length > 0) {
+      // Root must be this.model so the mixer can resolve named nodes
+      // (Flame0_0 etc. are children of model, not the top-level mesh group)
+      this.mixer = new THREE.AnimationMixer(this.model!);
+      for (const clip of this.animations) {
+        const action = this.mixer.clipAction(clip);
+        action.loop = THREE.LoopRepeat;
+        this.flameActions.push(action);
+      }
+    }
+
+    // Reset before traversal in case model reloads
+    this.modelFlameParts = [];
+    model.traverse((child) => {
+      const name = child.name.toLowerCase();
+      // Matches Flame0_0, Flame1_0, Flame2_0, Flame3_0, fire_animation nodes, etc.
+      if (name.includes('fire') || name.includes('flame')) {
+        child.visible = false;
+        this.modelFlameParts.push(child);
+      }
+    });
+    console.log(`[TikiTorch] Found ${this.modelFlameParts.length} flame part(s).`);
+
+    this.initPhysics();
+    this.isModelReady = true;
     
-    // Pole
-    const poleGeo = new THREE.CylinderGeometry(0.1, 0.1, 2, 8);
-    const poleMat = new THREE.MeshStandardMaterial({ color: 0x4d2600 });
-    const pole = new THREE.Mesh(poleGeo, poleMat);
-    pole.position.y = 0; // Centered
-    this.mesh.add(pole);
+    // Sync the visual state with isLit
+    this.setLit(this.isLit, true);
+  }
 
-    // Head
-    const headGeo = new THREE.CylinderGeometry(0.2, 0.1, 0.4, 8);
-    const headMat = new THREE.MeshStandardMaterial({ color: 0x333333 });
-    const head = new THREE.Mesh(headGeo, headMat);
-    head.position.y = 1.1; // top of pole
-    this.mesh.add(head);
+  private savedLinvel: any = null;
+  private savedAngvel: any = null;
 
-    this.mesh.userData = { grabbable: true, instance: this };
+  public saveState(): IObjectState {
+    const state: IObjectState = {
+      position: { x: this.mesh.position.x, y: this.mesh.position.y, z: this.mesh.position.z },
+      rotation: { x: this.mesh.rotation.x, y: this.mesh.rotation.y, z: this.mesh.rotation.z },
+      metadata: { isLit: this.isLit },
+      isHeld: this.isHeld
+    };
+    
+    if (this.rigidBody) {
+      const linvel = this.rigidBody.linvel();
+      const angvel = this.rigidBody.angvel();
+      state.linearVelocity = { x: linvel.x, y: linvel.y, z: linvel.z };
+      state.angularVelocity = { x: angvel.x, y: angvel.y, z: angvel.z };
+    }
+    return state;
+  }
+
+  public loadState(state: IObjectState): void {
+    this.mesh.position.set(state.position.x, state.position.y, state.position.z);
+    this.mesh.rotation.set(state.rotation.x, state.rotation.y, state.rotation.z);
+    
+    if (state.metadata && state.metadata.isLit !== undefined) {
+      this.isLit = state.metadata.isLit;
+      if (this.isModelReady) {
+        this.setLit(this.isLit, true);
+      }
+    }
+
+    if (state.linearVelocity) this.savedLinvel = state.linearVelocity;
+    if (state.angularVelocity) this.savedAngvel = state.angularVelocity;
+    this.isHeld = state.isHeld || false;
   }
 
   public initPhysics(): void {
     if (!physicsSystem.world) return;
-    // Total physical height 2.2 units
-    const { body, collider } = physicsSystem.addDynamicPrimitive(this.mesh, 'cylinder', [1.1, 0.2]);
+    const { body, collider } = physicsSystem.addDynamicPrimitive(this.mesh, { type: 'cylinder', size: [1.0, 0.1] });
     this.rigidBody = body;
     this.collider = collider;
+
+    if (this.savedLinvel) {
+      this.rigidBody.setLinvel(this.savedLinvel, true);
+      this.savedLinvel = null;
+    }
+    if (this.savedAngvel) {
+      this.rigidBody.setAngvel(this.savedAngvel, true);
+      this.savedAngvel = null;
+    }
   }
 
   public onGrab(): void {
@@ -61,8 +144,8 @@ export default class TikiTorch extends Grabbable {
     }
   }
 
-  public onUse(): void {
-    this.toggleLit();
+  public onUse(_target?: any): void {
+    // Torch lighting is now handled exclusively by external sources (like a Lighter)
   }
 
   public getIsLit(): boolean {
@@ -70,52 +153,63 @@ export default class TikiTorch extends Grabbable {
   }
 
   public toggleLit(): void {
-    this.isLit = !this.isLit;
-    if (this.isLit) {
-      this._createFlame();
-    } else {
-      this._removeFlame();
-    }
+    this.setLit(!this.isLit);
   }
 
-  public setLit(lit: boolean): void {
-    if (this.isLit === lit) return;
+  /**
+   * Sets the torch's lit state.
+   */
+  public setLit(lit: boolean, force: boolean = false): void {
+    if (this.isLit === lit && !force) return;
     this.isLit = lit;
-    if (this.isLit) this._createFlame();
-    else this._removeFlame();
-  }
 
-  private _createFlame(): void {
-    if (this.flame) return;
-    
-    const flameGeo = new THREE.SphereGeometry(0.15, 8, 8);
-    const flameMat = new THREE.MeshBasicMaterial({ color: 0xffaa00 });
-    this.flame = new THREE.Mesh(flameGeo, flameMat);
-    this.flame.position.y = 1.4; // Slightly above head
-    this.mesh.add(this.flame);
-
-    this.light = new THREE.PointLight(0xffaa00, 1.5, 10);
-    this.light.position.y = 1.4;
-    this.mesh.add(this.light);
-  }
-
-  private _removeFlame(): void {
-    if (this.flame) {
-      this.mesh.remove(this.flame);
-      this.flame = null;
+    if (this.isLit) {
+      this._enableFlame();
+      this.flameActions.forEach(a => { a.reset(); a.play(); });
+    } else {
+      this._disableFlame();
+      this.flameActions.forEach(a => a.stop());
     }
+  }
+
+  private _enableFlame(): void {
+    // 1. Model parts
+    this.modelFlameParts.forEach(p => p.visible = true);
+
+    // 2. Light
+    if (!this.light) {
+      this.light = new THREE.PointLight(0xffaa00, 2.0, 12);
+      this.light.position.set(0, 0.85, 0);
+      this.mesh.add(this.light);
+    }
+    this.light.visible = true;
+    this.light.intensity = 2.0;
+  }
+
+  private _disableFlame(): void {
+    // 1. Model parts
+    this.modelFlameParts.forEach(p => p.visible = false);
+
+    // 2. Light
     if (this.light) {
-      this.mesh.remove(this.light);
-      this.light = null;
+      this.light.visible = false;
+      this.light.intensity = 0;
     }
   }
 
   public update(dt: number): void {
     super.update(dt);
-    if (this.isLit && this.flame) {
-      const s = 1.0 + Math.sin(Date.now() * 0.01) * 0.1;
-      this.flame.scale.set(s, s, s);
-      if (this.light) this.light.intensity = 1.5 + Math.sin(Date.now() * 0.02) * 0.3;
+    this.mixer?.update(dt);
+
+    if (this.isLit) {
+      const time = Date.now() * 0.001;
+      
+      // Animate light intensity flicker
+      if (this.light && this.light.visible) {
+        const lightFlicker = Math.sin(time * 25) * 0.2 + Math.sin(time * 40) * 0.1;
+        this.light.intensity = 2.0 + lightFlicker;
+      }
     }
   }
 }
+

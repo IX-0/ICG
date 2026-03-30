@@ -19,6 +19,9 @@
     "vite": "^8.0.2"
   },
   "dependencies": {
-    "@dimforge/rapier3d-compat": "^0.19.3"
+    "@dimforge/rapier3d-compat": "^0.19.3",
+    "@gltf-transform/cli": "^4.3.0",
+    "@gltf-transform/core": "^4.3.0",
+    "@gltf-transform/functions": "^4.3.0"
   }
 }

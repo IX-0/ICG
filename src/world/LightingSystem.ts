@@ -14,6 +14,9 @@ export default class LightingSystem {
   /** Increments every time the clock crosses midnight — used by EnvironmentManager for phase cycling */
   public dayNumber: number = 0;
   private _prevHour: number = ENV_CONFIG.time.startHour;
+  
+  public fogOverrideDensity: number | null = null;
+  public fogOverrideColor: THREE.Color | number | null = null;
 
   constructor(scene: THREE.Scene) {
     this.scene = scene;
@@ -154,6 +157,12 @@ export default class LightingSystem {
   getAmbientIntensity(): number { return this.ambientLight.intensity; }
   getFogColor(): THREE.Color { return new THREE.Color(ENV_CONFIG.fog.dayColor); }
   getLightingState(): any { return { sunElevation: this._sinElevation }; }
+
+  addFog(density: number, color: THREE.Color | number): void {
+    this.fogOverrideDensity = density;
+    this.fogOverrideColor = color;
+    this.scene.fog = new THREE.FogExp2(color, density);
+  }
 
   update(_dt: number): void { }
 }

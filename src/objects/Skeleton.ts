@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { Interactable } from './Interactable';
+import { IPersistent } from '../interfaces/IPersistent';
+import { IObjectState } from '../interfaces/IState';
 import Player from '../player/Player';
 import { IGrabbable } from '../interfaces/IGrabbable';
 import { physicsSystem } from '../engine/PhysicsSystem';
@@ -7,8 +9,8 @@ import { physicsSystem } from '../engine/PhysicsSystem';
 /**
  * A dead skeleton that can be interacted with to get a crown.
  */
-export default class Skeleton extends Interactable {
-  public mesh: THREE.Group;
+export default class Skeleton extends Interactable implements IPersistent {
+  public persistentId: string = '';
   private isBones: boolean = false;
   private hasCrown: boolean = true;
   private bonesMesh: THREE.Group;
@@ -17,26 +19,60 @@ export default class Skeleton extends Interactable {
 
   public onInteractTakeCrown?: () => void;
 
-  constructor(isBones: boolean = false, hasCrown: boolean = true) {
+  constructor(isBones: boolean = false, hasCrown: boolean = true, persistentId: string = '') {
     super();
     this.isBones = isBones;
     this.hasCrown = hasCrown;
-    this.mesh = new THREE.Group();
+    this.persistentId = persistentId;
     
     this.skeletonMesh = this._createSkeletonMesh();
     this.bonesMesh = this._createBonesMesh();
     
-    if (this.isBones) {
-      this.mesh.add(this.bonesMesh);
-    } else {
-      this.mesh.add(this.skeletonMesh);
-      if (this.hasCrown) {
-        this._addCrown();
-      }
-    }
+    this._refreshMesh();
 
     this.mesh.userData = { interactable: !this.isBones, instance: this };
   }
+
+  public saveState(): IObjectState {
+    return {
+      position: { x: this.mesh.position.x, y: this.mesh.position.y, z: this.mesh.position.z },
+      rotation: { x: this.mesh.rotation.x, y: this.mesh.rotation.y, z: this.mesh.rotation.z },
+      metadata: {
+        isBones: this.isBones,
+        hasCrown: this.hasCrown
+      }
+    };
+  }
+
+  public loadState(state: IObjectState): void {
+    this.mesh.position.set(state.position.x, state.position.y, state.position.z);
+    this.mesh.rotation.set(state.rotation.x, state.rotation.y, state.rotation.z);
+    if (state.metadata) {
+      this.isBones = !!state.metadata.isBones;
+      this.hasCrown = !!state.metadata.hasCrown;
+      this._refreshMesh();
+    }
+  }
+
+  private _refreshMesh(): void {
+    this.mesh.remove(this.bonesMesh);
+    this.mesh.remove(this.skeletonMesh);
+    
+    if (this.isBones) {
+      this.mesh.add(this.bonesMesh);
+      this.mesh.userData.interactable = false;
+    } else {
+      this.mesh.add(this.skeletonMesh);
+      this.mesh.userData.interactable = true;
+      if (this.hasCrown) {
+        this._addCrown();
+      } else if (this.crownRef) {
+        this.skeletonMesh.remove(this.crownRef);
+        this.crownRef = null;
+      }
+    }
+  }
+
 
   private _createSkeletonMesh(): THREE.Group {
     const group = new THREE.Group();
@@ -118,14 +154,13 @@ export default class Skeleton extends Interactable {
   public onInteract(_player: Player, _heldItem: IGrabbable | null): void {
     if (this.isBones) return;
     
+    console.log("Skeleton broken! Crown taken.");
+
     // Toggle to bones
     this.isBones = true;
     this.hasCrown = false;
     
-    this.mesh.remove(this.skeletonMesh);
-    this.mesh.add(this.bonesMesh);
-    
-    this.mesh.userData.interactable = false;
+    this._refreshMesh();
     
     if (this.onInteractTakeCrown) {
       this.onInteractTakeCrown();
@@ -135,7 +170,13 @@ export default class Skeleton extends Interactable {
   public initPhysics(): void {
     if (!physicsSystem.world) return;
     // Static collider for the pile/skeleton base
-    physicsSystem.addFixedPrimitive(this.mesh, 'box', [0.4, 0.2, 0.4]);
+    const { body, collider } = physicsSystem.addFixedPrimitive(this.mesh, { type: 'box', size: [0.4, 0.2, 0.4] });
+    this.rigidBody = body;
+    this.collider = collider;
+  }
+
+  public getIsBones(): boolean {
+    return this.isBones;
   }
 
   public update(_dt: number): void {}

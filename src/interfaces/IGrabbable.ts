@@ -23,6 +23,7 @@ export interface IGrabbable {
 
   /**
    * Triggered when the player right-clicks while holding this item.
+   * @param target Optional target object being looked at during use.
    */
-  onUse(): void;
+  onUse(target?: any): void;
 }
