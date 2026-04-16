@@ -51,9 +51,14 @@ export class PhysicsSystem implements IUpdatable {
 
   private static getIndices(geometry: THREE.BufferGeometry): Uint32Array {
     if (geometry.index) return new Uint32Array(geometry.index.array);
-    return PhysicsSystem.buildIndices(
-      geometry.attributes.position.array as Float32Array
-    );
+    
+    // If not indexed, build indices based on position attribute COUNT
+    const count = geometry.attributes.position.count;
+    const arr = new Uint32Array(count);
+    for (let i = 0; i < count; i++) {
+        arr[i] = i;
+    }
+    return arr;
   }
 
   // ── Static trimesh ─────────────────────────────────────────────────────────
@@ -66,16 +71,15 @@ export class PhysicsSystem implements IUpdatable {
   public addStaticTrimesh(mesh: THREE.Mesh): RAPIER.Collider {
     PhysicsSystem.flushWorldMatrix(mesh);
 
-    const localPositions = mesh.geometry.attributes.position.array as Float32Array;
-    const worldPositions = new Float32Array(localPositions.length);
+    const positionAttr = mesh.geometry.attributes.position;
+    const worldPositions = new Float32Array(positionAttr.count * 3);
     const v = new THREE.Vector3();
 
-    for (let i = 0; i < localPositions.length; i += 3) {
-      v.set(localPositions[i], localPositions[i + 1], localPositions[i + 2])
-        .applyMatrix4(mesh.matrixWorld);
-      worldPositions[i]     = v.x;
-      worldPositions[i + 1] = v.y;
-      worldPositions[i + 2] = v.z;
+    for (let i = 0; i < positionAttr.count; i++) {
+      v.fromBufferAttribute(positionAttr, i).applyMatrix4(mesh.matrixWorld);
+      worldPositions[i * 3]     = v.x;
+      worldPositions[i * 3 + 1] = v.y;
+      worldPositions[i * 3 + 2] = v.z;
     }
 
     const body = this.world.createRigidBody(
@@ -103,12 +107,15 @@ export class PhysicsSystem implements IUpdatable {
     const worldScale = new THREE.Vector3();
     mesh.matrixWorld.decompose(worldPos, worldQuat, worldScale);
 
-    const localPositions = mesh.geometry.attributes.position.array as Float32Array;
-    const scaledPositions = new Float32Array(localPositions.length);
-    for (let i = 0; i < localPositions.length; i += 3) {
-      scaledPositions[i]     = localPositions[i]     * worldScale.x;
-      scaledPositions[i + 1] = localPositions[i + 1] * worldScale.y;
-      scaledPositions[i + 2] = localPositions[i + 2] * worldScale.z;
+    const positionAttr = mesh.geometry.attributes.position;
+    const scaledPositions = new Float32Array(positionAttr.count * 3);
+    const v = new THREE.Vector3();
+
+    for (let i = 0; i < positionAttr.count; i++) {
+      v.fromBufferAttribute(positionAttr, i);
+      scaledPositions[i * 3]     = v.x * worldScale.x;
+      scaledPositions[i * 3 + 1] = v.y * worldScale.y;
+      scaledPositions[i * 3 + 2] = v.z * worldScale.z;
     }
 
     const body = this.world.createRigidBody(

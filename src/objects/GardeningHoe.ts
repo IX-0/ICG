@@ -33,9 +33,15 @@ export default class GardeningHoe extends Grabbable implements IPersistent {
   }
 
   public saveState(): IObjectState {
+    const worldPos = new THREE.Vector3();
+    const worldQuat = new THREE.Quaternion();
+    this.mesh.getWorldPosition(worldPos);
+    this.mesh.getWorldQuaternion(worldQuat);
+    const worldEuler = new THREE.Euler().setFromQuaternion(worldQuat);
+
     return {
-      position: { x: this.mesh.position.x, y: this.mesh.position.y, z: this.mesh.position.z },
-      rotation: { x: this.mesh.rotation.x, y: this.mesh.rotation.y, z: this.mesh.rotation.z },
+      position: { x: worldPos.x, y: worldPos.y, z: worldPos.z },
+      rotation: { x: worldEuler.x, y: worldEuler.y, z: worldEuler.z },
       isHeld: this.isHeld
     };
   }

@@ -18,6 +18,10 @@ export default class PlatformManager {
   }
 
   createPlatform(platformIndex: number, offset: THREE.Vector3 = new THREE.Vector3(0, 0, 0)) {
+    // Check if it already exists at this index/offset to avoid duplicates
+    const existing = this.activePlatforms.find(p => (p as any).userData?.index === platformIndex);
+    if (existing) return { mesh: existing, config: (existing as any).userData.config, objects: [], offset };
+
     if (platformIndex < 0 || platformIndex >= 4) {
       console.error(`Invalid platform index: ${platformIndex}`);
       return null;
@@ -43,7 +47,8 @@ export default class PlatformManager {
 
     const platformMesh = this.factory.createPlatformMesh(platformConfig);
     platformMesh.position.y = -platformConfig.height / 2;
-    platformMesh.position.add(offset); // Apply Offset
+    platformMesh.position.add(offset);
+    platformMesh.userData = { index: platformIndex, config: platformConfig }; // Tag it
     addManagedMesh(platformMesh);
 
     return { mesh: platformMesh, config: platformConfig, objects: [], offset };
@@ -69,6 +74,12 @@ export default class PlatformManager {
 
   public initPhysicsForObject(obj: THREE.Object3D) {
     if (!physicsSystem.world || this.meshColliders.has(obj)) return;
+
+    // Check if the object explicitly disables physics via an instance (like Foliage/PalmTree)
+    const instance = (obj as any).userData?.instance;
+    if (instance && instance.hasPhysics === false) {
+        return;
+    }
 
     if (obj instanceof THREE.Mesh) {
       const collider = physicsSystem.addStaticTrimesh(obj);

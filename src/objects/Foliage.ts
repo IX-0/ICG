@@ -12,6 +12,7 @@ const FOLIAGE_VARIATIONS: Record<FoliageType, number> = {
 export default class Foliage extends StaticObject {
   constructor(type: FoliageType, variationIndex?: number) {
     super();
+    this.hasPhysics = false;
     const maxVars = FOLIAGE_VARIATIONS[type];
     const variation = variationIndex ?? (Math.floor(Math.random() * maxVars) + 1);
     this.modelPath = `models/foliage/${type}_${variation}.glb`;

@@ -7,7 +7,7 @@ export const PORTAL_CONFIG = {
   teleportThreshold: 0.20,
   exitNudge: 0.50,
   // Rendering & Culling
-  cullingDistance: 150,
+  cullingDistance: 50,
   renderMinDist: 0.25,
   renderMaxDist: 4.0,
   minResolution: 512,

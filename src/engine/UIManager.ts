@@ -13,8 +13,12 @@ import { IUpdatable } from '../interfaces/IUpdatable';
 export default class UIManager implements IUpdatable {
   private gui: GUI;
   private stats: Stats;
+  private visible: boolean = false;
   private msLabel: HTMLDivElement;
+  private ramLabel: HTMLDivElement;
+  private vramLabel: HTMLDivElement;
   private objectiveLabel: HTMLDivElement;
+  private renderer: THREE.WebGLRenderer;
 
   // Callbacks
   public onTimeChange?: (h: number) => void;
@@ -76,26 +80,51 @@ export default class UIManager implements IUpdatable {
   };
 
   constructor(_renderer: THREE.WebGLRenderer, private gameController: IGameController) {
+    this.renderer = _renderer;
     this.gui = new GUI({ title: 'Settings' });
+    this.gui.domElement.style.display = 'none'; // Hidden by default
+
     this.stats = new Stats();
     this.stats.showPanel(0);
+    this.stats.dom.style.display = 'none'; // Hidden by default
+    Object.assign(this.stats.dom.style, {
+        position: 'absolute',
+        top: '10px',
+        left: '10px',
+        zIndex: '10000'
+    });
     document.body.appendChild(this.stats.dom);
 
-    this.msLabel = document.createElement('div');
-    Object.assign(this.msLabel.style, {
-      position: 'absolute',
-      top: '0px',
-      left: '82px',
-      padding: '4px 8px',
-      fontFamily: 'monospace',
-      fontSize: '10px',
-      color: '#0ff',
-      background: 'rgba(0,0,0,0.5)',
-      pointerEvents: 'none',
-      zIndex: '10000',
-    });
-    this.msLabel.innerText = '0.00 ms';
-    document.body.appendChild(this.msLabel);
+    const createMetricLabel = (top: string, color: string) => {
+      const el = document.createElement('div');
+      Object.assign(el.style, {
+        position: 'absolute',
+        top: top,
+        left: '100px', // Offset from the Stats graph
+        padding: '4px 8px',
+        fontFamily: "'Space Mono', monospace",
+        fontSize: '11px',
+        color: color,
+        background: 'rgba(0, 0, 0, 0.7)',
+        backdropFilter: 'blur(4px)',
+        borderLeft: `3px solid ${color}`,
+        pointerEvents: 'none',
+        zIndex: '10000',
+        display: 'none',
+        minWidth: '150px',
+        textAlign: 'left'
+      });
+      document.body.appendChild(el);
+      return el;
+    };
+
+    this.msLabel = createMetricLabel('10px', '#00f2ff');
+    this.ramLabel = createMetricLabel('40px', '#79ff00');
+    this.vramLabel = createMetricLabel('70px', '#ff00ea');
+
+    this.msLabel.innerText = 'LATENCY: 0.00ms';
+    this.ramLabel.innerText = 'RAM: 0MB';
+    this.vramLabel.innerText = 'VRAM: 0MB';
 
     this.objectiveLabel = document.createElement('div');
     Object.assign(this.objectiveLabel.style, {
@@ -331,20 +360,47 @@ export default class UIManager implements IUpdatable {
   }
 
   public update(dt: number): void {
+    if (!this.visible) return;
+
     this.stats.update();
-    this.msLabel.innerText = `${(dt * 1000).toFixed(2)} ms`;
-  }
- 
-  updateStats(): void { this.stats.update(); }
- 
-  updateFrameTime(dt: number): void {
-    this.msLabel.innerText = `${(dt * 1000).toFixed(2)} ms`;
+    this.msLabel.innerText = `LATENCY: ${(dt * 1000).toFixed(2)}ms`;
+
+    // RAM usage (only available in Chrome/Edge with --enable-precise-memory-info or served from same-origin with certain COOP/COEP headers)
+    const mem = (performance as any).memory;
+    if (mem && mem.usedJSHeapSize > 0) {
+        const used = Math.round(mem.usedJSHeapSize / (1024 * 1024));
+        const total = Math.round(mem.jsHeapSizeLimit / (1024 * 1024));
+        this.ramLabel.innerText = `RAM: ${used}MB / ${total}MB`;
+    } else {
+        // Fallback for Firefox/Safari or restricted Chrome
+        this.ramLabel.innerText = 'RAM: N/A (BROWSER RESTRICTION)';
+    }
+
+    // VRAM/GPU Info from Three.js
+    const info = this.renderer.info;
+    const geometries = info.memory.geometries;
+    const textures = info.memory.textures;
+    
+    // Estimate VRAM consumption based on object counts (rough heuristic)
+    // Most textures we use are 2048x2048 (approx 16MB per texture)
+    const estVRAM = Math.round((textures * 16) + (geometries * 0.5)); 
+    
+    this.vramLabel.innerText = `VRAM: ~${estVRAM}MB (${textures} TEX | ${geometries} GEO)`;
   }
 
-  setVisible(visible: boolean): void {
-    this.gui.domElement.style.display = visible ? 'block' : 'none';
-    this.stats.dom.style.display = visible ? 'block' : 'none';
-    this.msLabel.style.display = visible ? 'block' : 'none';
+  public toggleF3(): void {
+    this.visible = !this.visible;
+    this.setVisible(this.visible);
+  }
+
+  public setVisible(visible: boolean): void {
+    this.visible = visible;
+    const display = visible ? 'block' : 'none';
+    this.gui.domElement.style.display = display;
+    this.stats.dom.style.display = display;
+    this.msLabel.style.display = display;
+    this.ramLabel.style.display = display;
+    this.vramLabel.style.display = display;
   }
 
   updateHUD(h: number): void {

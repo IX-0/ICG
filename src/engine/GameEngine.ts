@@ -16,6 +16,7 @@ import { Interactable } from '../objects/Interactable';
 import { IGameController } from '../interfaces/IGameController';
 import { PORTAL_CONFIG } from '../config/PortalConfig';
 import { physicsSystem } from './PhysicsSystem';
+import { ModeledObject } from '../objects/ModeledObject';
 
 export default class GameEngine implements IGameController {
   renderer: THREE.WebGLRenderer;
@@ -59,6 +60,13 @@ export default class GameEngine implements IGameController {
     this.ui = new UIManager(this.renderer, this);
     this.debugManager = new DebugManager(this.scene, this.world.lighting);
 
+    this._setupLoadingManager();
+
+    // ---- HUD & Objective Linking ----
+    this.world.puzzleManager.onObjectiveUpdate = (text) => {
+      this.ui.updateObjective(text);
+    };
+
     // ---- UI Callbacks (Time & Moon) ----
     this.ui.onTimeChange = (h: number) => {
       this.gameTimeHours = h;
@@ -92,9 +100,32 @@ export default class GameEngine implements IGameController {
   public async init(): Promise<void> {
     await physicsSystem.init();
     
-    // After physics is initialized, let the world init any physics bodies it needs
+    // Global Island initialization (All 4 islands concurrently)
+    await this.world.initAllIslands();
+    
+    // Wait for all initialized objects to finish their async loaders
+    try {
+        const loadWait = Promise.all(ModeledObject.PendingLoads);
+        const timeout = new Promise((_, reject) => setTimeout(() => reject('ModelInstantiationsTimeout'), 30000));
+        await Promise.race([loadWait, timeout]);
+    } catch (e) {
+        console.error('[GameEngine] Error or Timeout loading some models:', e);
+        console.error('[GameEngine] The following models may be stuck:', ModeledObject.PendingTrackers);
+    }
+
+    // Initial physics sync
     this.world.initPhysics();
     this.player.initPhysics();
+
+    // Pre-compile all materials and upload all buffers to GPU to prevent stutter when looking around
+    console.log('[GameEngine] Compiling WebGL shaders and uploading assets to GPU...');
+    this.renderer.compile(this.world.scene, this.camera);
+
+    // After everything is fully loaded, compiled, and physics generated, hide the overlay
+    const loadingScreen = document.getElementById('loading-screen');
+    const instructions = document.getElementById('instructions');
+    if (loadingScreen) loadingScreen.classList.add('hidden');
+    if (instructions) instructions.style.display = 'flex';
 
     // ---- Load Persistence ----
     const savedPlayer = this.stateManager.playerState;
@@ -181,6 +212,10 @@ export default class GameEngine implements IGameController {
     document.addEventListener('keydown', (e: KeyboardEvent) => {
       if (e.code === 'KeyE') this._handleGrabDrop();
       if (e.code === 'KeyF') this._handleUse();
+      if (e.code === 'F3') {
+        e.preventDefault();
+        this.ui.toggleF3();
+      }
     });
 
     this.renderer.domElement.addEventListener('mousedown', (e: MouseEvent) => {
@@ -403,9 +438,15 @@ export default class GameEngine implements IGameController {
 
   public jumpToPlatform(index: number): void {
     console.log(`Jumping to platform ${index}...`);
-    this.world.loadPlatform(index);
-    // Reposition player slightly back from the center to avoid being stuck in props
-    this.player.setPosition(0, 1.6, 8);
+    // Instead of loadPlatform (which clears), we just teleport the player
+    const offset = new THREE.Vector3(index * 1000, 0, 0);
+    this.player.setPosition(offset.x, 1.6, offset.z + 8);
+    
+    // We update the world's current platform reference so HUD and context work
+    const plat = this.world.platformManager.activePlatforms.find(p => (p as any).userData?.index === index);
+    if (plat) {
+        (this.world as any).currentPlatform = { mesh: plat, config: (plat as any).userData.config, objects: [], offset };
+    }
   }
 
   public spawnExtraTorch(): void {
@@ -421,6 +462,27 @@ export default class GameEngine implements IGameController {
     this.world.addPuzzleObject(torch);
     torch.initPhysics();
   }
+
+  private _setupLoadingManager(): void {
+    const loadingScreen = document.getElementById('loading-screen');
+    const progressBar = document.getElementById('progress-bar');
+    const loadingText = document.getElementById('loading-text');
+    const instructions = document.getElementById('instructions');
+
+    THREE.DefaultLoadingManager.onProgress = (_url, itemsLoaded, itemsTotal) => {
+      const progress = (itemsLoaded / itemsTotal) * 100;
+      if (progressBar) progressBar.style.width = `${progress}%`;
+      if (loadingText) loadingText.innerText = `Loading Assets: ${Math.round(progress)}%`;
+    };
+
+    THREE.DefaultLoadingManager.onLoad = () => {
+      console.log('[GameEngine] Loader finished, but waiting for model instantiations...');
+      // Progress UI maxed out
+      if (progressBar) progressBar.style.width = `100%`;
+      if (loadingText) loadingText.innerText = `Loading Assets: 100%`;
+    };
+  }
+
 }
 
 const PerspectiveCamera = THREE.PerspectiveCamera;

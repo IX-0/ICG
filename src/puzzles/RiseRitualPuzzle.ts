@@ -14,9 +14,7 @@ export class RiseFindCrownStage implements IPuzzleStage {
   constructor(private skeleton: Skeleton) {}
 
   onEnter() {
-    this.skeleton.onInteractTakeCrown = () => {
-      this.isCompleted = true;
-    };
+    // No longer overwriting onInteractTakeCrown to prevent breaking island-specific logic
   }
 
   update(_dt: number) {

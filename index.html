@@ -240,11 +240,72 @@
         .start-btn:active {
             transform: translateY(0);
         }
+        /* --- Loading Screen --- */
+        #loading-screen {
+            position: fixed;
+            inset: 0;
+            z-index: 500;
+            background: #050a14;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            transition: opacity 1s ease-out, visibility 1s;
+        }
+
+        #loading-screen.hidden {
+            opacity: 0;
+            visibility: hidden;
+        }
+
+        .loading-title {
+            font-family: 'Cinzel', serif;
+            font-size: 24px;
+            letter-spacing: 8px;
+            color: #c8deff;
+            margin-bottom: 40px;
+            text-shadow: 0 0 20px rgba(100, 160, 255, 0.4);
+        }
+
+        .progress-container {
+            width: 300px;
+            height: 2px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 4px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .progress-bar {
+            position: absolute;
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, #1a4a9e, #64a0ff);
+            box-shadow: 0 0 15px rgba(100, 160, 255, 0.6);
+            transition: width 0.3s ease-out;
+        }
+
+        .loading-text {
+            margin-top: 20px;
+            font-size: 10px;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            color: rgba(140, 180, 255, 0.4);
+        }
+
     </style>
 </head>
 
 <body>
-    <div id="instructions">
+    <div id="loading-screen">
+        <div class="loading-title">INITIALIZING</div>
+        <div class="progress-container">
+            <div id="progress-bar" class="progress-bar"></div>
+        </div>
+        <div id="loading-text" class="loading-text">Loading Assets: 0%</div>
+    </div>
+
+    <div id="instructions" style="display: none;">
         <div class="overlay-card">
             <div class="overlay-title">NAPOLEON'S FATE</div>
             <div class="overlay-subtitle">A Mind-Breaking Sea Experience</div>

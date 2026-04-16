@@ -9,6 +9,7 @@ import GardeningHoe from '../objects/GardeningHoe';
 import Coffin from '../objects/Coffin';
 import PalmTree from '../objects/PalmTree';
 import Foliage, { FoliageType } from '../objects/Foliage';
+import Rock, { RockType } from '../objects/Rock';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 
@@ -296,7 +297,13 @@ export default class PlatformFactory {
     return bush;
   }
 
-  createRock(position: THREE.Vector3, scale: number = 1.0) {
+  createRock(type: RockType, position: THREE.Vector3, variationIndex?: number) {
+    const rock = new Rock(type, variationIndex);
+    rock.mesh.position.copy(position);
+    return rock;
+  }
+
+  createProceduralMeshRock(position: THREE.Vector3, scale: number = 1.0) {
     const rockGeo = new THREE.DodecahedronGeometry(0.5, 0);
     const rockMat = new THREE.MeshStandardMaterial({ color: 0x616161, roughness: 0.9 });
     const rock = new THREE.Mesh(rockGeo, rockMat);

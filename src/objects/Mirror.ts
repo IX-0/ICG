@@ -38,6 +38,14 @@ export default class Mirror extends Interactable {
     this.mesh.add(mirror);
     (this as any).mirrorMesh = mirror;
 
+    // Configure Mirror Camera layers: 
+    // Ignore Layer 0 (Normal world), See Layer 2 (Mirror-only objects like the Wood Crown)
+    const reflectorCamera = (mirror as any).camera;
+    if (reflectorCamera instanceof THREE.Camera) {
+        reflectorCamera.layers.disable(0);
+        reflectorCamera.layers.enable(2);
+    }
+
     // Stand
     const standGeo = new THREE.CylinderGeometry(0.1, 0.2, 1, 8);
     const stand = new THREE.Mesh(standGeo, goldMat);

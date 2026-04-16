@@ -9,8 +9,7 @@ export function setupReturnIsland(ctx: IslandContext): void {
   const spawnWithOffset = (pos: THREE.Vector3) => pos.clone().add(ctx.offset);
   const sharedIdPrefix = 'rise';
 
-  // Nighttime
-  ctx.lighting.setSunTime(21);
+  // Nighttime handled in registerActivation
 
   // 1. Scenery
   const palm1 = ctx.factory.createPalmTree(spawnWithOffset(new THREE.Vector3(-8, 0, -8)), 3);
@@ -32,8 +31,33 @@ export function setupReturnIsland(ctx: IslandContext): void {
   const banana1 = ctx.factory.createFoliage('banana', spawnWithOffset(new THREE.Vector3(-4, 0, 6)));
   banana1.loadModel();
   ctx.addStaticMesh(banana1.mesh);
-  ctx.addStaticMesh(ctx.factory.createRock(spawnWithOffset(new THREE.Vector3(-2, 0, 5)), 1.5));
-  ctx.addStaticMesh(ctx.factory.createRock(spawnWithOffset(new THREE.Vector3(6, 0, -2)), 0.8));
+  const rock1 = ctx.factory.createRock('normal', spawnWithOffset(new THREE.Vector3(-2, 0, 5)), 1);
+  rock1.loadModel();
+  ctx.addStaticMesh(rock1.mesh);
+
+  const rock2 = ctx.factory.createRock('mossy', spawnWithOffset(new THREE.Vector3(6, 0, -2)), 2);
+  rock2.loadModel();
+  ctx.addStaticMesh(rock2.mesh);
+
+  const rock3 = ctx.factory.createRock('normal', spawnWithOffset(new THREE.Vector3(4, 0, 4)), 3);
+  rock3.loadModel();
+  ctx.addStaticMesh(rock3.mesh);
+
+  const rock4 = ctx.factory.createRock('mossy', spawnWithOffset(new THREE.Vector3(-4, 0, -4)), 1);
+  rock4.loadModel();
+  ctx.addStaticMesh(rock4.mesh);
+
+  for (let i = 0; i < 8; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const r = 4 + Math.random() * 6; 
+    const rt = Math.random() > 0.5 ? 'normal' : 'mossy';
+    const x = Math.cos(angle) * r;
+    const z = Math.sin(angle) * r;
+    const rk = ctx.factory.createRock(rt, spawnWithOffset(new THREE.Vector3(x, 0, z)));
+    rk.mesh.rotation.y = Math.random() * Math.PI * 2;
+    rk.loadModel();
+    ctx.addStaticMesh(rk.mesh);
+  }
 
   // 2. Props
   const throne = ctx.factory.createThrone(spawnWithOffset(new THREE.Vector3(0, 0, -4)), `prop_throne_${sharedIdPrefix}`);
@@ -82,7 +106,7 @@ export function setupReturnIsland(ctx: IslandContext): void {
       ctx.scene.remove(throne.mesh);
     }
 
-    const targetOffset = new THREE.Vector3(240, 0, 0);
+    const targetOffset = new THREE.Vector3(3000, 0, 0);
     const nextPlatform = ctx.platformManager.createPlatform(3, targetOffset);
     if (nextPlatform) {
       nextPlatform.objects.forEach((obj: any) => {
@@ -93,7 +117,7 @@ export function setupReturnIsland(ctx: IslandContext): void {
 
     ctx.portalSystem.addPortalPair(
       new THREE.Vector3(0, 3.0, -10).add(ctx.platform.mesh.position), new THREE.Euler(0, 0, 0), 0xff0000,
-      new THREE.Vector3(240, 5.0, 0), new THREE.Euler(0, Math.PI / 2, 0), 0xffaa00,
+      new THREE.Vector3(3000, 5.0, 0), new THREE.Euler(0, Math.PI / 2, 0), 0xffaa00,
       PORTAL_CONFIG.width, PORTAL_CONFIG.height,
       (isPlayer) => {
         if (isPlayer) {
@@ -103,5 +127,8 @@ export function setupReturnIsland(ctx: IslandContext): void {
     );
   };
 
-  ctx.puzzleManager.setActivePuzzle(returnPuzzle);
+  ctx.registerActivation(() => {
+    ctx.lighting.setSunTime(21);
+    ctx.puzzleManager.setActivePuzzle(returnPuzzle);
+  });
 }

@@ -64,6 +64,7 @@ export default class Skeleton extends Interactable implements IPersistent {
     } else {
       this.mesh.add(this.skeletonMesh);
       this.mesh.userData.interactable = true;
+      this.mesh.userData.instance = this; // Re-ensure instance is set
       if (this.hasCrown) {
         this._addCrown();
       } else if (this.crownRef) {
@@ -177,6 +178,10 @@ export default class Skeleton extends Interactable implements IPersistent {
 
   public getIsBones(): boolean {
     return this.isBones;
+  }
+
+  public getHasCrown(): boolean {
+    return this.hasCrown;
   }
 
   public update(_dt: number): void {}

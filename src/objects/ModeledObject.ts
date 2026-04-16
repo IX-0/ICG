@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { IModeled } from '../interfaces/IModeled';
 
 /**
@@ -36,6 +37,17 @@ export abstract class ModeledObject implements IModeled {
   /** Shared loader instance per object. Can be replaced with a cached loader. */
   protected readonly loader: GLTFLoader = new GLTFLoader();
 
+  constructor() {
+    this.mesh.userData = { instance: this };
+  }
+
+  /** Static tracker for all model loading promises to ensure synchronous loading screens don't hide too early */
+  public static PendingLoads: Promise<any>[] = [];
+  public static PendingTrackers: Set<string> = new Set();
+  
+  /** Global Cache to drastically lower VRAM & Memory consumption by recycling BufferGeometries & Materials */
+  public static GlobalCache: Map<string, Promise<{ scene: THREE.Group, animations: THREE.AnimationClip[] }>> = new Map();
+
   // ── Loading ────────────────────────────────────────────────────────────────
 
   /**
@@ -49,28 +61,47 @@ export abstract class ModeledObject implements IModeled {
       return this.mesh;
     }
 
-    return new Promise<THREE.Group>((resolve, reject) => {
-      this.loader.load(
-        this.modelPath,
-        async (gltf) => {
-          this.model = gltf.scene;
-          this.animations = gltf.animations ?? [];
-          this.mesh.add(this.model);
+    ModeledObject.PendingTrackers.add(this.modelPath);
 
-          if (this.customTexturePath) {
-            await this.applyCustomTexture(this.customTexturePath);
-          }
+    if (!ModeledObject.GlobalCache.has(this.modelPath)) {
+      const p = new Promise<{ scene: THREE.Group, animations: THREE.AnimationClip[] }>((resolve, reject) => {
+        this.loader.load(
+          this.modelPath,
+          (gltf) => resolve({ scene: gltf.scene, animations: gltf.animations ?? [] }),
+          undefined,
+          reject
+        );
+      });
+      ModeledObject.GlobalCache.set(this.modelPath, p);
+    }
 
-          await this.onModelLoaded(this.model);
-          resolve(this.model);
-        },
-        undefined,
-        (error) => {
-          console.error(`[${this.constructor.name}] Failed to load model "${this.modelPath}":`, error);
-          reject(error);
+    const loadTask = async () => {
+      try {
+        const cached = await ModeledObject.GlobalCache.get(this.modelPath)!;
+        
+        // Deep clone safely utilizing SkeletonUtils so Bones and Meshes instantiate properly, 
+        // while BufferGeometry & WebGLTextures stay universally cached by reference in memory!
+        this.model = SkeletonUtils.clone(cached.scene) as THREE.Group;
+        this.animations = cached.animations;
+        this.mesh.add(this.model);
+
+        if (this.customTexturePath) {
+          await this.applyCustomTexture(this.customTexturePath);
         }
-      );
-    });
+
+        await this.onModelLoaded(this.model);
+        ModeledObject.PendingTrackers.delete(this.modelPath);
+        return this.model;
+      } catch (e) {
+        console.error(`[${this.constructor.name}] Error loading "${this.modelPath}":`, e);
+        ModeledObject.PendingTrackers.delete(this.modelPath);
+        throw e;
+      }
+    };
+
+    const runTask = loadTask();
+    ModeledObject.PendingLoads.push(runTask);
+    return runTask;
   }
 
   /**

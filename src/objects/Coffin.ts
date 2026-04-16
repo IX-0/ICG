@@ -7,7 +7,6 @@ import { IGrabbable } from '../interfaces/IGrabbable';
 import { physicsSystem } from '../engine/PhysicsSystem';
 
 export default class Coffin extends Interactable implements IPersistent {
-  public mesh: THREE.Group;
   public persistentId: string = '';
   public onClose?: () => void;
 
@@ -17,24 +16,18 @@ export default class Coffin extends Interactable implements IPersistent {
   constructor(persistentId: string = '') {
     super();
     this.persistentId = persistentId;
-    this.mesh = new THREE.Group();
+    this.modelPath = 'models/wooden_coffin/scene.gltf';
     
-    // Wood material
-    const woodMat = new THREE.MeshStandardMaterial({ color: 0x3d2b1f, roughness: 0.9 });
-    
-    // Base
-    const baseGeo = new THREE.BoxGeometry(2.2, 0.6, 1.0);
-    const base = new THREE.Mesh(baseGeo, woodMat);
-    this.mesh.add(base);
-
-    // Lid (slightly larger)
-    const lidGeo = new THREE.BoxGeometry(2.3, 0.1, 1.1);
-    const lid = new THREE.Mesh(lidGeo, woodMat);
-    lid.position.y = 0.35;
-    this.mesh.add(lid);
-
     this.mesh.userData = { interactable: true, instance: this };
-    this.mesh.visible = false; // Start hidden (under the "X")
+    this.mesh.visible = false; // Start hidden
+    this.loadModel();
+  }
+
+  protected async onModelLoaded(model: THREE.Group): Promise<void> {
+    // Correct scaling/rotation for the coffin asset if necessary
+    model.scale.set(0.5, 0.5, 0.5);
+    // Ensure on Layer 0
+    model.traverse(c => { if ((c as THREE.Mesh).isMesh) c.layers.set(0); });
   }
 
   public setVisible(visible: boolean) {
@@ -77,7 +70,8 @@ export default class Coffin extends Interactable implements IPersistent {
 
   public initPhysics(): void {
     if (!physicsSystem.world) return;
-    const { body, collider } = physicsSystem.addFixedPrimitive(this.mesh, { type: 'box', size: [1.1, 0.3, 0.5] });
+    // Using a box for the coffin physics
+    const { body, collider } = physicsSystem.addFixedPrimitive(this.mesh, { type: 'box', size: [1.0, 0.25, 0.4] });
     this.rigidBody = body;
     this.collider = collider;
   }

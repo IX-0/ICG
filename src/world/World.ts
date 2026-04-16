@@ -27,10 +27,11 @@ export default class World {
   interaction: InteractionManager;
   lighting: LightingSystem;
   water: WaterSystem;
-  currentPlatform: any | null = null;
+  public currentPlatform: any = null;
   puzzleManager: PuzzleManager;
   private activeZones: TriggerZone[] = [];
   private puzzleObjects: any[] = [];
+  private islandActivations: Map<number, () => void> = new Map();
 
   constructor(scene: THREE.Scene, camera: THREE.Camera, stateManager: StateManager) {
     this.scene = scene;
@@ -51,8 +52,31 @@ export default class World {
     this.puzzleManager = new PuzzleManager();
  
     this.interaction = new InteractionManager(camera);
+  }
 
-    this.loadPlatform(0);
+  public async initAllIslands() {
+    console.log('[World] Initializing all 4 islands...');
+    
+    for (let i = 0; i < 4; i++) {
+        const offset = new THREE.Vector3(i * 1000, 0, 0);
+        const platform = this.platformManager.createPlatform(i, offset);
+        if (platform) {
+            if (i === 0) this.currentPlatform = platform;
+            const ctx = this._createContext(platform, offset);
+            
+            if (i === 0) await setupRiseIsland(ctx);
+            else if (i === 1) await setupIsolationIsland(ctx);
+            else if (i === 2) await setupReturnIsland(ctx);
+            else if (i === 3) await setupTragedyIsland(ctx);
+            
+            // Add objects to global tracking
+            this.puzzleObjects.push(...platform.objects);
+        }
+    }
+    
+    // Boot up the logic exclusively for the starting island
+    const startCb = this.islandActivations.get(0);
+    if (startCb) startCb();
   }
 
   public loadPlatform(platformIndex: number, offset: THREE.Vector3 = new THREE.Vector3(0, 0, 0)) {
@@ -107,19 +131,22 @@ export default class World {
       loadObjectState: (obj: any) => this._loadObjectState(obj),
       spawnCrown: (id: string, pos?: THREE.Vector3) => this._spawnCrown(id, pos),
       onTransition: (nextIndex: number, oldPlat: any, newPlat: any) => {
-        const oldObjects = oldPlat.objects;
-        this.puzzleObjects = this.puzzleObjects.filter(o => !oldObjects.includes(o));
-        oldObjects.forEach((o: any) => {
-          if (o.mesh) this.interaction.unregisterInteractive(o.mesh);
-        });
-        this.platformManager.removePlatform(oldPlat.mesh);
+        // In the new architecture, we don't destroy. We just move the player and update context.
+        console.log(`[World] Transitioning from island ${oldPlat.config.index} to ${nextIndex}`);
+        
+        // The portal system handles the physical teleportation if used via portals,
+        // but if this is a script-triggered transition:
+        const nextOffset = new THREE.Vector3(nextIndex * 1000, 0, 0);
+        
+        // We find the 'newPlat' which should already exist
         this.currentPlatform = newPlat;
         this.portalSystem.clearPortals();
 
-        const ctx = this._createContext(newPlat, newPlat.offset || new THREE.Vector3());
-        if (nextIndex === 1) setupIsolationIsland(ctx);
-        else if (nextIndex === 2) setupReturnIsland(ctx);
-        else if (nextIndex === 3) setupTragedyIsland(ctx);
+        const cb = this.islandActivations.get(nextIndex);
+        if (cb) cb();
+      },
+      registerActivation: (cb: () => void) => {
+        this.islandActivations.set(platform.config.index, cb);
       }
     };
   }
@@ -162,6 +189,8 @@ export default class World {
     }
   }
 
+
+
   public getCurrentPlatform() { return this.currentPlatform; }
   public getEnvironment() { return this.environment; }
   
@@ -194,12 +223,24 @@ export default class World {
   }
 
   private _spawnCrown(id: string, position?: THREE.Vector3): Crown {
+    console.log(`[World] Spawning Crown identified by: ${id}`);
     const crown = new Crown();
     crown.persistentId = id;
-    if (!this._loadObjectState(crown)) {
-      if (position) crown.mesh.position.copy(position);
-      else crown.mesh.position.set(5.2, 0.5, 5.2);
+    const loaded = this._loadObjectState(crown);
+    console.log(`[World] Crown ${id} state loaded: ${loaded}`);
+
+    if (!loaded) {
+      if (position) {
+        crown.mesh.position.copy(position);
+        console.log(`[World] Crown ${id} set to requested position:`, position);
+      } else {
+        crown.mesh.position.set(5.2, 0.5, 5.2);
+        console.log(`[World] Crown ${id} set to default position: [5.2, 0.5, 5.2]`);
+      }
+    } else {
+      console.log(`[World] Crown ${id} restored to saved position:`, crown.mesh.position.clone());
     }
+
     this.scene.add(crown.mesh);
     this.puzzleObjects.push(crown);
     this.interaction.registerInteractive(crown.mesh);

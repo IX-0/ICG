@@ -5,7 +5,11 @@ export default defineConfig({
   base: './',
   server: {
     port: 3000,
-    open: true
+    open: true,
+    headers: {
+      'Cross-Origin-Embedder-Policy': 'require-corp',
+      'Cross-Origin-Opener-Policy': 'same-origin',
+    },
   },
   build: {
     target: 'esnext',

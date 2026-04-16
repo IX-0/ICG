@@ -34,8 +34,30 @@ export function setupRiseIsland(ctx: IslandContext): void {
   banana1.loadModel();
   ctx.addStaticMesh(banana1.mesh);
 
-  ctx.addStaticMesh(ctx.factory.createRock(spawnWithOffset(new THREE.Vector3(-2, 0, 5)), 1.5));
-  ctx.addStaticMesh(ctx.factory.createRock(spawnWithOffset(new THREE.Vector3(6, 0, -2)), 0.8));
+  const rock1 = ctx.factory.createRock('normal', spawnWithOffset(new THREE.Vector3(-2, 0, 5)), 1);
+  rock1.loadModel();
+  ctx.addStaticMesh(rock1.mesh);
+
+  const rock2 = ctx.factory.createRock('mossy', spawnWithOffset(new THREE.Vector3(6, 0, -2)), 2);
+  rock2.loadModel();
+  ctx.addStaticMesh(rock2.mesh);
+
+  const rock3 = ctx.factory.createRock('normal', spawnWithOffset(new THREE.Vector3(-8, 0, 2)), 3);
+  rock3.loadModel();
+  ctx.addStaticMesh(rock3.mesh);
+
+  // Scatter extra rocks around the edge
+  for (let i = 0; i < 8; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const r = 4 + Math.random() * 6; // distance from center 4 to 10
+    const rt = Math.random() > 0.5 ? 'normal' : 'mossy';
+    const x = Math.cos(angle) * r;
+    const z = Math.sin(angle) * r;
+    const rk = ctx.factory.createRock(rt, spawnWithOffset(new THREE.Vector3(x, 0, z)));
+    rk.mesh.rotation.y = Math.random() * Math.PI * 2;
+    rk.loadModel();
+    ctx.addStaticMesh(rk.mesh);
+  }
 
   // 2. Props
   const throne = ctx.factory.createThrone(spawnWithOffset(new THREE.Vector3(0, 0, -4)), `prop_throne_${sharedIdPrefix}`);
@@ -62,7 +84,12 @@ export function setupRiseIsland(ctx: IslandContext): void {
 
   // 3. Puzzle Setup
   const crownId = 'prop_crown_rise';
-  if (ctx.stateManager.getObjectState(crownId)) {
+  const crownState = ctx.stateManager.getObjectState(crownId);
+  const skeletonHasCrown = skeleton.getHasCrown();
+  console.log(`[RiseIsland] Crown Check - ID: ${crownId}, HasState: ${!!crownState}, SkeletonHasCrown: ${skeletonHasCrown}`);
+
+  if (crownState || !skeletonHasCrown) {
+    console.log(`[RiseIsland] Spawning crown for ID: ${crownId}`);
     ctx.spawnCrown(crownId);
   }
 
@@ -76,7 +103,9 @@ export function setupRiseIsland(ctx: IslandContext): void {
     if (!exists) {
       const spawnPos = new THREE.Vector3(5.2, 0.5, 5.2).add(ctx.platform.mesh.position);
       spawnPos.y += ctx.platform.config.height / 2;
-      ctx.spawnCrown(crownId, spawnPos);
+      const crown = ctx.spawnCrown(crownId, spawnPos);
+      // Immediately track the crown's state so it doesn't vanish on island reloads
+      ctx.stateManager.updateObjectState(crownId, crown.saveState());
     }
     ctx.stateManager.updateObjectState(skeleton.persistentId, skeleton.saveState());
   };
@@ -87,12 +116,13 @@ export function setupRiseIsland(ctx: IslandContext): void {
     // Consume the Crown
     const crown = ctx.puzzleObjects.find(o => (o as any).persistentId === crownId);
     if (crown) {
+      console.log(`[RiseIsland] Consuming crown ${crownId} (removing from world)`);
       ctx.scene.remove(crown.mesh);
       ctx.removePuzzleObject(crown);
     }
 
     ctx.lighting.addFog(0.08, 0x556677);
-    const targetOffset = new THREE.Vector3(80, 0, 0);
+    const targetOffset = new THREE.Vector3(1000, 0, 0);
     const nextPlatform = ctx.platformManager.createPlatform(1, targetOffset);
     if (nextPlatform) {
       nextPlatform.objects.forEach((obj: any) => {
@@ -103,7 +133,7 @@ export function setupRiseIsland(ctx: IslandContext): void {
 
     ctx.portalSystem.addPortalPair(
       new THREE.Vector3(0, 3.0, -10), new THREE.Euler(0, 0, 0), PORTAL_CONFIG.colorA,
-      new THREE.Vector3(80, 4.0, 0), new THREE.Euler(0, Math.PI / 2, 0), PORTAL_CONFIG.colorB,
+      new THREE.Vector3(1000, 4.0, 0), new THREE.Euler(0, Math.PI / 2, 0), PORTAL_CONFIG.colorB,
       PORTAL_CONFIG.width, PORTAL_CONFIG.height,
       (isPlayer) => {
         if (isPlayer) {
@@ -114,5 +144,9 @@ export function setupRiseIsland(ctx: IslandContext): void {
     );
   };
 
-  ctx.puzzleManager.setActivePuzzle(risePuzzle);
+  ctx.registerActivation(() => {
+    ctx.lighting.setSunTime(8); 
+    ctx.lighting.addFog(0.005, 0x8899aa); 
+    ctx.puzzleManager.setActivePuzzle(risePuzzle);
+  });
 }

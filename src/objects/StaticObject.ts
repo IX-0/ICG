@@ -6,9 +6,10 @@ import { physicsSystem } from '../engine/PhysicsSystem';
 
 export abstract class StaticObject extends ModeledObject implements IStaticObject {
   protected colliders: RAPIER.Collider[] = [];
+  protected hasPhysics: boolean = true;
 
   public initPhysics(): void {
-    if (!physicsSystem.world) return;
+    if (!physicsSystem.world || !this.hasPhysics) return;
     
     // Add a static trimesh for each mesh in this group
     this.mesh.traverse((child) => {

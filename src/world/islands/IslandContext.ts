@@ -27,6 +27,7 @@ export interface IslandContext {
   loadObjectState: (obj: any) => boolean;
   spawnCrown: (id: string, position?: THREE.Vector3) => Crown;
   onTransition: (nextIndex: number, oldPlatform: any, newPlatform: any) => void;
+  registerActivation: (callback: () => void) => void;
   activeZones: TriggerZone[];
 }
 
