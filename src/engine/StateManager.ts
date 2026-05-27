@@ -1,6 +1,7 @@
 import { IObjectState, IPlayerState, IGlobalState } from '../interfaces/IState';
 
 const STORAGE_KEY = 'icg_game_state';
+const SAVE_VERSION = 2;
 
 /**
  * Centrally manages all persistent data for the game, including
@@ -21,6 +22,9 @@ export default class StateManager {
 
   /** Latest saved state for the player. */
   public playerState: IPlayerState | null = null;
+
+  /** True while a reset is in flight — used to skip in-flight saves. */
+  public isResetting: boolean = false;
 
   constructor() {
     this.loadFromStorage();
@@ -43,22 +47,6 @@ export default class StateManager {
     return true;
   }
 
-  getCurrentType(): number {
-    return this.global.currentPlatformIndex;
-  }
-
-  getCurrentVariation(): number {
-    return 0;
-  }
-
-  getStoryClue(): string {
-    const idx = this.global.currentPlatformIndex;
-    if (idx === 0) return 'Where am I?';
-    if (idx === 1) return 'This looks familiar...';
-    if (idx === 2) return "It's repeating. I'm trapped in a loop.";
-    return "This must be the end.";
-  }
-
   isPlatformCompleted(index: number): boolean {
     return this.global.completedPlatforms.includes(index);
   }
@@ -75,6 +63,10 @@ export default class StateManager {
 
   getObjectState(id: string): IObjectState | null {
     return this.objectStates[id] || null;
+  }
+
+  getAllObjectStates(): Record<string, IObjectState> {
+    return this.objectStates;
   }
 
   setFlag(key: string, value: any): void {
@@ -95,49 +87,19 @@ export default class StateManager {
     if (playerState) {
       this.playerState = playerState;
     }
-
-    const data = {
-      global: this.global,
-      objectStates: this.objectStates,
-      playerState: this.playerState
-    };
-    
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-    console.log('Game state saved to storage.');
+    // Save to storage disabled
   }
 
-  /**
-   * Deserializes state from localStorage.
-   */
   loadFromStorage(): void {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return;
-
-    try {
-      const data = JSON.parse(raw);
-      if (data.global) this.global = data.global;
-      if (data.objectStates) this.objectStates = data.objectStates;
-      if (data.playerState) this.playerState = data.playerState;
-    } catch (e) {
-      console.error('Failed to parse GameState from localStorage:', e);
-    }
+    // Load from storage disabled
   }
 
   /**
-   * Wipes localStorage and resets in-memory state.
+   * Wipe in-memory state. By default also clears localStorage.
+   * Pass `{ clearStorage: false }` to keep storage intact.
    */
-  hardReset(): void {
-    localStorage.removeItem(STORAGE_KEY);
-    this.reset();
-  }
-
-  resetState(): void {
-    this.reset();
-    localStorage.removeItem(STORAGE_KEY);
-    console.log('Game state fully reset.');
-  }
-
-  reset(): void {
+  reset(opts: { clearStorage?: boolean } = {}): void {
+    this.isResetting = true;
     this.global = {
       currentPlatformIndex: 0,
       completedPlatforms: [],
@@ -148,6 +110,10 @@ export default class StateManager {
     this.objectStates = {};
     this.playerState = null;
   }
+
+  /** Backwards-compatible aliases — both wipe storage. */
+  hardReset(): void { this.reset(); }
+  resetState(): void { this.reset(); }
 
   getElapsedTime(): number {
     return (Date.now() - this.global.gameStartTime) / 1000;

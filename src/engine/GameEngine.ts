@@ -5,21 +5,17 @@ import UIManager from './UIManager';
 import StateManager from './StateManager';
 import { ENV_CONFIG } from '../config/EnvironmentConfig';
 import DebugManager from './DebugManager';
-import TikiTorch from '../objects/TikiTorch';
-import Lighter from '../objects/Lighter';
-import WaterBucket from '../objects/WaterBucket';
-import Chest from '../objects/Chest';
-import Skeleton from '../objects/Skeleton';
-import Crown from '../objects/Crown';
-import GardeningHoe from '../objects/GardeningHoe';
 import { Interactable } from '../objects/Interactable';
+import InteractionController from '../player/InteractionController';
 import { IGameController } from '../interfaces/IGameController';
-import { PORTAL_CONFIG } from '../config/PortalConfig';
 import { physicsSystem } from './PhysicsSystem';
-import { ModeledObject } from '../objects/ModeledObject';
+import { assetLoader } from './AssetLoader';
+import { audioManager } from './AudioManager';
+import { createRenderer, RendererCapabilities } from './Renderer';
 
 export default class GameEngine implements IGameController {
   renderer: THREE.WebGLRenderer;
+  caps!: RendererCapabilities;
   scene: THREE.Scene;
   camera: THREE.PerspectiveCamera;
   world: World;
@@ -29,48 +25,71 @@ export default class GameEngine implements IGameController {
   debugManager: DebugManager;
 
   private lastTime: number = 0;
+  private _gameStarted: boolean = false;
   private gameTimeHours: number = ENV_CONFIG.time.startHour;
-  private timeSpeed: number = ENV_CONFIG.time.speed;
   private isTimePaused: boolean = false;
-  private grabbables: any[] = [];
-  private interactables: Interactable[] = [];
+  public grabbables: any[] = [];
+  public interactables: Interactable[] = [];
+  // [AUTOSAVE_DISABLED] private _autoSaveTimer: number = 0;
+  public interactionController!: InteractionController;
 
   constructor() {
+    // Synchronous WebGL init — canvas must be in DOM before World/Player construct.
+    // createRenderer() probes for WebGPU in init() and stores caps; WebGPU swap happens in phase 6.
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setPixelRatio(window.devicePixelRatio);
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFShadowMap;
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 0.5;
-    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.localClippingEnabled = true;
     document.body.appendChild(this.renderer.domElement);
     this.renderer.domElement.id = 'game-canvas';
 
     this.scene = new THREE.Scene();
-    this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000);
+    this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 750);
     this.camera.layers.enable(1);
     this.camera.layers.enable(2);
     this.scene.add(this.camera);
 
     this.stateManager = new StateManager();
-    this.world = new World(this.scene, this.camera, this.stateManager);
+    this.world = new World(this.scene, this.camera, this.stateManager, this.renderer);
     this.player = new Player(this.scene, this.camera, this.renderer.domElement);
     this.ui = new UIManager(this.renderer, this);
-    this.debugManager = new DebugManager(this.scene, this.world.lighting);
+    this.debugManager = new DebugManager(this);
 
-    this._setupLoadingManager();
+    audioManager.init(this.camera);
 
     // ---- HUD & Objective Linking ----
     this.world.puzzleManager.onObjectiveUpdate = (text) => {
       this.ui.updateObjective(text);
+      // [AUTOSAVE_DISABLED] auto-save on every puzzle stage advance
+      // this.saveGame();
     };
+
+    // ---- Auto-save + audio + lighting preset on island transition ----
+    this.world.onTransition = () => {
+      // [AUTOSAVE_DISABLED] auto-save on island transition
+      // this.saveGame();
+      const idx = this.stateManager.global.currentPlatformIndex;
+      audioManager.setIslandAmbient(idx);
+      this.world.applyIslandPreset(idx);
+      this.world.shadows.setIslandTarget(idx);
+    };
+
+    // ---- Per-island GPU compile ----
+    this.world.onCompileNeeded = (scene: THREE.Scene) => {
+      console.log('[GameEngine] Re-compiling shaders for new island...');
+      this.renderer.compile(scene, this.camera);
+    };
+
+    // ---- Auto-save on page unload ----
+    // window.addEventListener('beforeunload', () => this.saveGame()); // Disabled per request
 
     // ---- UI Callbacks (Time & Moon) ----
     this.ui.onTimeChange = (h: number) => {
       this.gameTimeHours = h;
-      this._updateLighting();
+      this.world.lighting.setSunTime(h);
+      this._updateLighting(0);
     };
     this.ui.onPauseToggle = (paused: boolean) => {
       this.isTimePaused = paused;
@@ -78,109 +97,152 @@ export default class GameEngine implements IGameController {
     this.ui.onMoonPhaseChange = (phase: string) => {
       this.world.environment.setMoonPhase(phase);
     };
-    this.ui.onTimeSpeedChange = (speed: number) => {
-      this.timeSpeed = speed;
+    this.ui.onTimeSpeedChange = (_speed: number) => {
+      // Drift rate is now preset-controlled via LightingSystem.applyPreset
     };
     this.ui.onStarsChange = () => {
       this.world.environment.rebuildStars();
+    };
+    this.ui.onConfigChange = () => {
+      // Re-apply lighting immediately so GUI sliders take effect without pointer lock
+      const l = this.world.lighting;
+      l.setSunTime(l.lastSunTime);
+      const sl = l.sunLight;
+      this.world.shadows.syncSun(sl.color, sl.intensity, sl.visible);
+      this.world.shadows.updateSunDirection(l.getSunPosition());
     };
 
     const startBtn = document.getElementById('start-btn');
     if (startBtn) startBtn.addEventListener('click', () => this._handleStart());
     this.renderer.domElement.addEventListener('click', () => this._handleStart());
 
+    const pauseOverlay = document.getElementById('pause-overlay');
+    if (pauseOverlay) pauseOverlay.addEventListener('click', () => this.renderer.domElement.requestPointerLock());
+
+    document.addEventListener('pointerlockchange', () => this._onPointerLockChange());
+
     // ---- Resize ----
     window.addEventListener('resize', () => this.onWindowResize());
 
-    this._initInteractions();
+    this.interactionController = new InteractionController(
+      this.player,
+      this.world.interaction,
+      this.renderer.domElement,
+      () => this.ui.toggleF3()
+    );
 
     (window as any).gameEngine = this;
   }
 
   public async init(): Promise<void> {
-    await physicsSystem.init();
-    
-    // Global Island initialization (All 4 islands concurrently)
-    await this.world.initAllIslands();
-    
-    // Wait for all initialized objects to finish their async loaders
+    const setProgress = (pct: number, label: string) => {
+      const bar = document.getElementById('progress-bar');
+      const txt = document.getElementById('loading-text');
+      if (bar) bar.style.width = `${pct}%`;
+      if (txt) txt.innerText = label;
+    };
+
     try {
-        const loadWait = Promise.all(ModeledObject.PendingLoads);
-        const timeout = new Promise((_, reject) => setTimeout(() => reject('ModelInstantiationsTimeout'), 30000));
-        await Promise.race([loadWait, timeout]);
+      // ── Stage A: Boot (0–30%) ────────────────────────────────────────
+      setProgress(2, 'Probing renderer capabilities...');
+      const { caps } = await createRenderer();
+      this.caps = caps;
+      // Apply physically-correct renderer settings now that caps are known
+      this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      this.renderer.toneMappingExposure = 1.2;
+      console.log(`[GameEngine] Renderer caps: WebGPU=${caps.isWebGPU}, shadowQuality=${caps.shadowQuality}`);
+
+      setProgress(5, 'Initializing physics...');
+      await physicsSystem.init();
+
+      setProgress(20, 'Building world...');
+      // lighting / water / env already constructed — nothing async here
+
+      setProgress(30, 'Queuing island assets...');
+      await this.world.initAllIslands();
+
+      // ── Stage B: Asset loading (30–95%) ─────────────────────────────
+      assetLoader.onProgress = (loaded, total) => {
+        const ratio = total > 0 ? loaded / total : 1;
+        const pct = Math.round(30 + ratio * 65);
+        setProgress(pct, `Loading assets (${loaded} / ${total})`);
+      };
+
+      try {
+        await assetLoader.awaitAll(30_000);
+        this.world.optimizeStaticMeshes();
+      } catch (e) {
+        console.error('[GameEngine] Asset load error / timeout:', e);
+        this._showLoadError(String(e));
+        return;
+      }
+
+      // ── Stage C: Finalize (95–100%) ──────────────────────────────────
+      setProgress(95, 'Registering physics...');
+      this.world.initPhysics();
+      this.player.initPhysics();
+
+      setProgress(96, 'Applying island lighting...');
+      const startIsland = this.stateManager.global.currentPlatformIndex;
+      this.world.shadows.init(this.world.lighting.sunLight);
+      this.world.shadows.setIslandTarget(startIsland);
+      this.world.applyIslandPreset(startIsland);
+      const sl = this.world.lighting.sunLight;
+      this.world.shadows.syncSun(sl.color, sl.intensity, sl.visible);
+      this.world.shadows.registerSceneMaterials();
+
+      setProgress(97, 'Restoring save...');
+      this._restorePersistence();
+
+      setProgress(99, 'Compiling shaders...');
+      console.log('[GameEngine] Compiling WebGL shaders...');
+      this.renderer.compile(this.world.scene, this.camera);
+
+      setProgress(100, 'Ready');
+
+      audioManager.setIslandAmbient(this.stateManager.global.currentPlatformIndex);
+
+      const loadingScreen = document.getElementById('loading-screen');
+      const instructions = document.getElementById('instructions');
+      if (loadingScreen) loadingScreen.classList.add('hidden');
+      if (instructions) instructions.style.display = 'flex';
+
     } catch (e) {
-        console.error('[GameEngine] Error or Timeout loading some models:', e);
-        console.error('[GameEngine] The following models may be stuck:', ModeledObject.PendingTrackers);
+      console.error('[GameEngine] Fatal init error:', e);
+      this._showLoadError(String(e));
     }
+  }
 
-    // Initial physics sync
-    this.world.initPhysics();
-    this.player.initPhysics();
-
-    // Pre-compile all materials and upload all buffers to GPU to prevent stutter when looking around
-    console.log('[GameEngine] Compiling WebGL shaders and uploading assets to GPU...');
-    this.renderer.compile(this.world.scene, this.camera);
-
-    // After everything is fully loaded, compiled, and physics generated, hide the overlay
-    const loadingScreen = document.getElementById('loading-screen');
-    const instructions = document.getElementById('instructions');
-    if (loadingScreen) loadingScreen.classList.add('hidden');
-    if (instructions) instructions.style.display = 'flex';
-
-    // ---- Load Persistence ----
+  private _restorePersistence(): void {
     const savedPlayer = this.stateManager.playerState;
-    if (savedPlayer) {
-      console.log('Restoring player state...');
-      this.player.loadState(savedPlayer);
-
-      // Re-attach held item if any
-      if (savedPlayer.heldItemId) {
-        // Search in grabbables or interactables
-        const items = [
-          ...this.grabbables, 
-          ...this.world.getPersistentObjects()
-        ];
-        const target = items.find((i: any) => i && (i as any).persistentId === savedPlayer.heldItemId);
-        if (target) {
-          console.log(`Re-grabbing item: ${savedPlayer.heldItemId}`);
-          this.player.grab(target);
-        }
+    if (!savedPlayer) return;
+    this.player.loadState(savedPlayer);
+    if (savedPlayer.heldItemId) {
+      const items = [...this.grabbables, ...this.world.getPersistentObjects()];
+      const target = items.find((i: any) => i?.persistentId === savedPlayer.heldItemId);
+      if (target) {
+        this.player.grab(target);
+      } else {
+        console.warn(`[GameEngine] Held item "${savedPlayer.heldItemId}" not found — clearing.`);
       }
     }
   }
 
-  public spawnPortalPair(): void {
-    // One portal at a time - clear previous
-    this.world.portalSystem.clearPortals();
-
-    const p = this.player;
-    // Get forward direction on the horizontal plane
-    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(p.camera.quaternion);
-    forward.y = 0;
-    forward.normalize();
-
-    const posA = p.position.clone().add(forward.clone().multiplyScalar(4));
-    const posB = p.position.clone().add(forward.clone().multiplyScalar(12));
-
-    // Face each other on the player's axis
-    const rotA = new THREE.Euler(0, p.camera.rotation.y + Math.PI, 0);
-    const rotB = new THREE.Euler(0, p.camera.rotation.y, 0);
-
-    // Sit on platform (assumed at Y=0.5)
-    const portalY = PORTAL_CONFIG.height / 2 + 0.5;
-    posA.y = portalY;
-    posB.y = portalY;
-
-    this.world.portalSystem.addPortalPair(
-      posA, rotA, PORTAL_CONFIG.colorA,
-      posB, rotB, PORTAL_CONFIG.colorB,
-      PORTAL_CONFIG.width, PORTAL_CONFIG.height
-    );
+  private _showLoadError(message: string): void {
+    const errEl = document.getElementById('loading-error');
+    const errMsg = document.getElementById('loading-error-message');
+    if (errEl) errEl.style.display = 'block';
+    if (errMsg) errMsg.innerText = message;
   }
 
+
   public saveGame(): void {
+    if (this.stateManager.isResetting) {
+      console.log('Skipping save: Game is resetting.');
+      return;
+    }
     console.log('Saving game progress...');
-    
+
     // 1. Save all persistent objects on the current platform
     const persistentObjects = [
       ...this.grabbables,
@@ -197,170 +259,7 @@ export default class GameEngine implements IGameController {
     this.stateManager.saveToStorage(playerState);
   }
 
-  public toggleDebug(item: string, visible: boolean): void {
-    switch (item) {
-      case 'axes': this.debugManager.setAxesVisible(visible); break;
-      case 'grid': this.debugManager.setGridVisible(visible); break;
-      case 'sunHelper': this.debugManager.setSunHelperVisible(visible); break;
-      case 'moonHelper': this.debugManager.setMoonHelperVisible(visible); break;
-      case 'shadowHelper': this.debugManager.setShadowHelperVisible(visible); break;
-    }
-  }
-
-  private _initInteractions(): void {
-    // Keep keyboard fallbacks just in case
-    document.addEventListener('keydown', (e: KeyboardEvent) => {
-      if (e.code === 'KeyE') this._handleGrabDrop();
-      if (e.code === 'KeyF') this._handleUse();
-      if (e.code === 'F3') {
-        e.preventDefault();
-        this.ui.toggleF3();
-      }
-    });
-
-    this.renderer.domElement.addEventListener('mousedown', (e: MouseEvent) => {
-      if (!this.player.getIsLocked()) return;
-
-      if (e.button === 0) { // Left click
-        this._handleGrabDrop();
-      } else if (e.button === 2) { // Right click
-        this._handleUse();
-      }
-    });
-
-    // Prevent default context menu on right click
-    this.renderer.domElement.addEventListener('contextmenu', (e: MouseEvent) => {
-      e.preventDefault();
-    });
-  }
-
-  private _handleGrabDrop(): void {
-    const player = this.player;
-    if (player.heldItem) {
-      const item = player.heldItem;
-      player.drop();
-      this.scene.add(item.mesh);
-      this.world.interaction.registerInteractive(item.mesh);
-      return;
-    }
-
-    const hit = this.world.interaction.raycastFromCamera();
-    if (!hit) return;
-
-    // Check for a grabbable first
-    let grabObj: THREE.Object3D | null = hit.object;
-    while (grabObj) {
-      if (grabObj.userData?.grabbable && grabObj.userData.instance) {
-        player.grab(grabObj.userData.instance);
-        this.world.interaction.unregisterInteractive(grabObj);
-        return;
-      }
-      grabObj = grabObj.parent;
-    }
-
-    // Fallback: non-grabbable interactable (e.g. Skeleton)
-    const resolved = this.world.interaction.resolveInteractable(hit);
-    if (resolved) resolved.instance.onInteract(player, player.heldItem);
-  }
-
-  private _handleUse(): void {
-    const player = this.player;
-    const hit = this.world.interaction.raycastFromCamera();
-
-    // If looking at an interactable world object, interact with it
-    if (hit) {
-      const resolved = this.world.interaction.resolveInteractable(hit);
-      if (resolved) {
-        console.log(`Interacting with: ${resolved.object.userData.type ?? 'object'}`);
-        resolved.instance.onInteract(player, player.heldItem);
-        return;
-      }
-    }
-
-    // Otherwise use the held item, passing the hit target for context-sensitive use
-    if (player.heldItem) {
-      const hitTarget = hit ? this.world.interaction.resolveInteractable(hit) : null;
-      player.heldItem.onUse(hitTarget?.instance ?? null);
-    }
-  }
-
-
-  public spawnObject(type: string): void {
-    const persistentId = `dynamic_${type}_${Date.now()}`;
-
-    if (type === 'chest') {
-      const chest = new Chest(null, persistentId);
-      
-      // Check for saved state
-      const savedState = this.stateManager.getObjectState(persistentId);
-      if (savedState) {
-        chest.loadState(savedState);
-      } else {
-        // Default spawn logic
-        const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.player.camera.quaternion);
-        forward.y = 0;
-        if (forward.lengthSq() > 0) forward.normalize();
-        else forward.set(0, 0, -1);
-
-        const spawnPos = this.player.position.clone().add(forward.multiplyScalar(2));
-        spawnPos.y = 0.5; // ground
-        chest.mesh.position.copy(spawnPos);
-        chest.mesh.lookAt(this.player.position.x, 0.5, this.player.position.z);
-      }
-
-      this.scene.add(chest.mesh);
-      this.world.interaction.registerInteractive(chest.mesh);
-      this.interactables.push(chest);
-      chest.initPhysics();
-      return;
-    }
-
-    else if (type === 'skeleton') {
-      const skeleton = new Skeleton();
-      const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.player.camera.quaternion);
-      forward.y = 0; forward.normalize();
-      const spawnPos = this.player.position.clone().add(forward.multiplyScalar(3));
-      spawnPos.y = 0.1;
-      skeleton.mesh.position.copy(spawnPos);
-      skeleton.mesh.lookAt(this.player.position.x, 0.1, this.player.position.z);
-      this.scene.add(skeleton.mesh);
-      this.world.interaction.registerInteractive(skeleton.mesh);
-      this.interactables.push(skeleton);
-      skeleton.initPhysics();
-      return;
-    }
-
-    let obj: any = null;
-    if (type === 'torch') obj = new TikiTorch(persistentId);
-    else if (type === 'lighter') obj = new Lighter(persistentId);
-    else if (type === 'bucket') obj = new WaterBucket(persistentId);
-    else if (type === 'crown') obj = new Crown();
-    else if (type === 'hoe') obj = new GardeningHoe();
-    if (!obj) return;
-
-    // Check for saved state for these dynamic objects
-    const savedState = this.stateManager.getObjectState(persistentId);
-    if (savedState) {
-      obj.loadState(savedState);
-    } else {
-      // Spawn 2 units in front of player
-      const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.player.camera.quaternion);
-      const spawnPos = this.player.camera.position.clone().add(forward.multiplyScalar(2));
-      if (type === 'torch') spawnPos.y = 1.1; // Place at ground height
-      obj.mesh.position.copy(spawnPos);
-    }
-
-    this.scene.add(obj.mesh);
-    this.world.interaction.registerInteractive(obj.mesh);
-    this.grabbables.push(obj);
-    obj.initPhysics();
-  }
-
   private _handleStart(): void {
-    // HUD Stats
-    const statsHud = document.getElementById('hud-stats');
-    if (statsHud) statsHud.style.display = 'block';
-
     this.renderer.domElement.requestPointerLock();
   }
 
@@ -374,12 +273,18 @@ export default class GameEngine implements IGameController {
       const dt = Math.min((t - this.lastTime) / 1000, 0.1);
       this.lastTime = t;
       this._update(dt);
-      
+
+      // Sync shadow light to sun every frame — not gated on pointer lock so GUI tweaks show live
+      const _l = this.world.lighting;
+      this.world.shadows.updateSunDirection(_l.getSunPosition());
+      this.world.shadows.syncSun(_l.sunLight.color, _l.sunLight.intensity, _l.sunLight.visible);
+      this.world.shadows.update();
+
       if (this.world.portalSystem) {
         this.world.portalSystem.render(this.renderer, this.scene, this.camera, this.world.environment);
       }
-      
-      this.renderer.render(this.scene, this.camera);
+
+      this.world.postFx.render();
 
       // Performance Stats & UI update
       this.ui.update(dt);
@@ -392,10 +297,7 @@ export default class GameEngine implements IGameController {
 
     this.player.update(dt);
 
-    if (!this.isTimePaused) {
-      this.gameTimeHours = (this.gameTimeHours + dt * this.timeSpeed) % 24;
-    }
-    this._updateLighting();
+    this._updateLighting(dt);
 
     this.grabbables.forEach(g => g.update(dt));
     this.interactables.forEach(i => i.update(dt));
@@ -404,85 +306,63 @@ export default class GameEngine implements IGameController {
     this.debugManager.update(dt);
     this.ui.updateHUD(this.gameTimeHours);
     physicsSystem.update(dt);
+
+    // [AUTOSAVE_DISABLED] periodic auto-save every 60s
+    // this._autoSaveTimer += dt;
+    // if (this._autoSaveTimer >= 60) {
+    //   this._autoSaveTimer = 0;
+    //   this.saveGame();
+    // }
   }
 
-  private _updateLighting(): void {
+  private _updateLighting(dt: number): void {
     const l = this.world.lighting;
     const e = this.world.environment;
 
-    l.setSunTime(this.gameTimeHours);
+    if (!this.isTimePaused) l.tickDrift(dt);
+    this.gameTimeHours = l.lastSunTime;
+
     const nightFactor = l.getNightFactor();
-
     e.updateSky();
-    const moonDir = l.getMoonDirection();
-    e.updateMoon(moonDir, this.camera.position, nightFactor);
-
+    e.updateMoon(l.getMoonDirection(), this.camera.position, nightFactor);
     this.world.water.updateForLighting(l.getSunPosition());
-    this.renderer.toneMappingExposure = THREE.MathUtils.lerp(
-      ENV_CONFIG.toneMapping.dayExposure,
-      ENV_CONFIG.toneMapping.nightExposure,
-      nightFactor
-    );
   }
 
   onWindowResize(): void {
-    this.camera.aspect = window.innerWidth / window.innerHeight;
+    const w = window.innerWidth, h = window.innerHeight;
+    this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.renderer.setSize(w, h);
+    this.world.postFx.onResize(w, h);
+  }
+
+  private _onPointerLockChange(): void {
+    const locked = !!document.pointerLockElement;
+    const pauseOverlay = document.getElementById('pause-overlay');
+    const instructions = document.getElementById('instructions');
+
+    if (locked) {
+      this._gameStarted = true;
+      if (pauseOverlay) pauseOverlay.classList.remove('visible');
+      if (instructions) instructions.style.display = 'none';
+
+      const spawnFade = document.getElementById('spawn-fade');
+      if (spawnFade) {
+        spawnFade.classList.add('hidden');
+      }
+
+      this.player.startWakeUp();
+    } else if (this._gameStarted) {
+      if (pauseOverlay) pauseOverlay.classList.add('visible');
+      if (instructions) instructions.style.display = 'none';
+    } else {
+      if (pauseOverlay) pauseOverlay.classList.remove('visible');
+      if (instructions) instructions.style.display = 'flex';
+    }
   }
 
   transitionToNextPlatform(): void {
     this.stateManager.moveToNextPlatform();
     this.world.transitionPlatform(this.stateManager.global.currentPlatformIndex);
   }
-
-  public jumpToPlatform(index: number): void {
-    console.log(`Jumping to platform ${index}...`);
-    // Instead of loadPlatform (which clears), we just teleport the player
-    const offset = new THREE.Vector3(index * 1000, 0, 0);
-    this.player.setPosition(offset.x, 1.6, offset.z + 8);
-    
-    // We update the world's current platform reference so HUD and context work
-    const plat = this.world.platformManager.activePlatforms.find(p => (p as any).userData?.index === index);
-    if (plat) {
-        (this.world as any).currentPlatform = { mesh: plat, config: (plat as any).userData.config, objects: [], offset };
-    }
-  }
-
-  public spawnExtraTorch(): void {
-    console.log("Spawning extra torch (simulating bringing it from Isolation)...");
-    const torch = new TikiTorch(`prop_torch_isolation_extra`);
-    // Spawn in front of player
-    const forward = this.player.getDirection();
-    const spawnPos = this.player.camera.position.clone().add(forward.multiplyScalar(2));
-    spawnPos.y = 1.1; 
-    torch.mesh.position.copy(spawnPos);
-    
-    this.scene.add(torch.mesh);
-    this.world.addPuzzleObject(torch);
-    torch.initPhysics();
-  }
-
-  private _setupLoadingManager(): void {
-    const loadingScreen = document.getElementById('loading-screen');
-    const progressBar = document.getElementById('progress-bar');
-    const loadingText = document.getElementById('loading-text');
-    const instructions = document.getElementById('instructions');
-
-    THREE.DefaultLoadingManager.onProgress = (_url, itemsLoaded, itemsTotal) => {
-      const progress = (itemsLoaded / itemsTotal) * 100;
-      if (progressBar) progressBar.style.width = `${progress}%`;
-      if (loadingText) loadingText.innerText = `Loading Assets: ${Math.round(progress)}%`;
-    };
-
-    THREE.DefaultLoadingManager.onLoad = () => {
-      console.log('[GameEngine] Loader finished, but waiting for model instantiations...');
-      // Progress UI maxed out
-      if (progressBar) progressBar.style.width = `100%`;
-      if (loadingText) loadingText.innerText = `Loading Assets: 100%`;
-    };
-  }
-
 }
-
-const PerspectiveCamera = THREE.PerspectiveCamera;

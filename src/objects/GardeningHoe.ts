@@ -6,50 +6,32 @@ import { physicsSystem } from '../engine/PhysicsSystem';
 
 export default class GardeningHoe extends Grabbable implements IPersistent {
   public persistentId: string = '';
+  public objectType: string = 'hoe';
 
   constructor(persistentId: string = '') {
     super();
     this.persistentId = persistentId;
-    
-    // Visuals
-    const woodMat = new THREE.MeshStandardMaterial({ color: 0x5d4037 });
-    const ironMat = new THREE.MeshStandardMaterial({ color: 0x444444, metalness: 0.8 });
+    this.modelPath = 'models/farming_hoe/farming_hoe.glb';
 
-    // Handle
-    const handleGeo = new THREE.CylinderGeometry(0.03, 0.03, 1.2, 6);
-    const handle = new THREE.Mesh(handleGeo, woodMat);
-    this.mesh.add(handle);
-
-    // Blade
-    const bladeGeo = new THREE.BoxGeometry(0.3, 0.1, 0.05);
-    const blade = new THREE.Mesh(bladeGeo, ironMat);
-    blade.position.y = 0.6;
-    blade.rotation.x = Math.PI / 2;
-    this.mesh.add(blade);
-
-    this.mesh.userData = { grabbable: true, instance: this };
     this.holdPosition.set(0.4, -0.4, -1.0);
     this.holdRotation.set(-Math.PI / 4, 0, 0);
+    this.placementYOffset = 0.5;
+
+    this.mesh.userData = { grabbable: true, instance: this };
+    this.loadModel();
+  }
+
+  protected async onModelLoaded(_model: THREE.Group): Promise<void> {
+    _model.scale.setScalar(0.01);
+    _model.traverse(c => { if ((c as THREE.Mesh).isMesh) c.layers.set(0); });
   }
 
   public saveState(): IObjectState {
-    const worldPos = new THREE.Vector3();
-    const worldQuat = new THREE.Quaternion();
-    this.mesh.getWorldPosition(worldPos);
-    this.mesh.getWorldQuaternion(worldQuat);
-    const worldEuler = new THREE.Euler().setFromQuaternion(worldQuat);
-
-    return {
-      position: { x: worldPos.x, y: worldPos.y, z: worldPos.z },
-      rotation: { x: worldEuler.x, y: worldEuler.y, z: worldEuler.z },
-      isHeld: this.isHeld
-    };
+    return this.saveGrabbableState(this.objectType);
   }
 
   public loadState(state: IObjectState): void {
-    this.mesh.position.set(state.position.x, state.position.y, state.position.z);
-    this.mesh.rotation.set(state.rotation.x, state.rotation.y, state.rotation.z);
-    this.isHeld = !!state.isHeld;
+    this.loadGrabbableState(state);
   }
 
   public initPhysics(): void {
@@ -57,14 +39,10 @@ export default class GardeningHoe extends Grabbable implements IPersistent {
     const { body, collider } = physicsSystem.addDynamicPrimitive(this.mesh, { type: 'box', size: [0.1, 0.6, 0.1] });
     this.rigidBody = body;
     this.collider = collider;
+    this.applySavedVelocities();
   }
 
   public onUse(_target?: any): void {
-
     // Digging handled by World search for X-spot
-  }
-
-  public update(dt: number): void {
-    super.update(dt);
   }
 }

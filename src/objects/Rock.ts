@@ -17,8 +17,9 @@ export default class Rock extends StaticObject {
   }
 
   protected async onModelLoaded(model: THREE.Group): Promise<void> {
-    // Normalizing scale for rocks, similar to foliage but with physics enabled
-    model.scale.setScalar(0.01);
+    // Normalizing scale for rocks, adjusting to 1.0 for visibility.
+    // If the gltf is tiny, 0.01 will make it invisible.
+    model.scale.setScalar(1.0);
 
     // Enable shadows on all meshes within the rock model
     model.traverse((child) => {

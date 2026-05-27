@@ -2,7 +2,7 @@ export const PLAYER_CONFIG = {
   fov: 75,
   warpDuration: 0.4,
   moveSpeed: 6,
-  jumpForce: 8,
+  jumpForce: 6.5,
   height: 1.7,
   crouchHeight: 0.85,
   radius: 0.4,

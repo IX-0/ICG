@@ -1,6 +1,7 @@
 import { IPuzzleStage } from '../interfaces/IPuzzleStage';
-import TriggerZone from '../world/TriggerZone';
+import TriggerZone from '../world/interaction/TriggerZone';
 import TikiTorch from '../objects/TikiTorch';
+import { audioManager } from '../engine/AudioManager';
 
 /**
  * Stage 1: The Gathering
@@ -51,5 +52,7 @@ export class ReturnRiteStage implements IPuzzleStage {
     }
   }
 
-  onComplete() {}
+  onComplete() {
+    audioManager.play('portal-hum');
+  }
 }

@@ -54,23 +54,6 @@
             left: 0;
         }
 
-        /* HUD */
-        #hud-stats {
-            position: fixed;
-            top: 16px;
-            left: 16px;
-            color: #e8f4ff;
-            font-size: 12px;
-            line-height: 1.8;
-            z-index: 100;
-            pointer-events: none;
-            background: rgba(5, 10, 20, 0.55);
-            backdrop-filter: blur(8px);
-            padding: 12px 16px;
-            border-radius: 8px;
-            border: 1px solid rgba(255, 255, 255, 0.08);
-        }
-
         /* --- HUD Glassmorphism --- */
         .glass-panel {
             background: rgba(255, 255, 255, 0.05);
@@ -293,16 +276,133 @@
             color: rgba(140, 180, 255, 0.4);
         }
 
+        #loading-error {
+            display: none;
+            margin-top: 28px;
+            padding: 14px 20px;
+            border: 1px solid rgba(255, 80, 80, 0.4);
+            border-radius: 8px;
+            background: rgba(255, 30, 30, 0.08);
+            color: rgba(255, 140, 140, 0.9);
+            font-size: 11px;
+            text-align: center;
+            max-width: 320px;
+        }
+
+        #loading-error-title {
+            font-weight: 600;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            margin-bottom: 6px;
+        }
+
+        #loading-error-message {
+            opacity: 0.75;
+            word-break: break-word;
+        }
+
+        /* ── Tragedy end-sequence fade ── */
+        #game-fade {
+            position: fixed;
+            inset: 0;
+            z-index: 1000;
+            background: #000;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 2s ease-in;
+        }
+
+        #game-fade.active {
+            opacity: 1;
+            pointer-events: all;
+        }
+
+        #game-fade-text {
+            position: absolute;
+            bottom: 30%;
+            width: 100%;
+            text-align: center;
+            font-family: 'Cinzel', serif;
+            font-size: 18px;
+            letter-spacing: 4px;
+            color: rgba(200, 180, 140, 0.0);
+            transition: color 1.5s ease-in 0.5s;
+        }
+
+        #game-fade.active #game-fade-text {
+            color: rgba(200, 180, 140, 0.8);
+        }
+
+        /* ── Spawn fade transition ── */
+        #spawn-fade {
+            position: fixed;
+            inset: 0;
+            z-index: 250; /* below loading screen (500) and instructions (300) */
+            background: #000;
+            opacity: 1;
+            pointer-events: none;
+            transition: opacity 2s ease-out;
+        }
+
+        #spawn-fade.hidden {
+            opacity: 0;
+        }
+
+        /* ── Pause overlay (pointer lock lost) ── */
+        #pause-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 400;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0, 5, 15, 0.70);
+            backdrop-filter: blur(4px);
+        }
+
+        #pause-overlay.visible {
+            display: flex;
+        }
+
+        #pause-card {
+            text-align: center;
+            padding: 40px 56px;
+            background: rgba(8, 14, 28, 0.85);
+            border: 1px solid rgba(80, 140, 220, 0.25);
+            border-radius: 14px;
+            box-shadow: 0 0 60px rgba(30, 80, 180, 0.18);
+        }
+
+        #pause-card .pause-title {
+            font-family: 'Cinzel', serif;
+            font-size: 22px;
+            letter-spacing: 6px;
+            color: #c8deff;
+            margin-bottom: 12px;
+        }
+
+        #pause-card .pause-hint {
+            font-size: 12px;
+            letter-spacing: 2px;
+            color: rgba(140, 180, 255, 0.5);
+            text-transform: uppercase;
+        }
+
     </style>
 </head>
 
 <body>
+    <div id="spawn-fade"></div>
     <div id="loading-screen">
         <div class="loading-title">INITIALIZING</div>
         <div class="progress-container">
             <div id="progress-bar" class="progress-bar"></div>
         </div>
-        <div id="loading-text" class="loading-text">Loading Assets: 0%</div>
+        <div id="loading-text" class="loading-text">Initializing physics...</div>
+        <div id="loading-error">
+            <div id="loading-error-title">Failed to Load</div>
+            <div id="loading-error-message"></div>
+        </div>
     </div>
 
     <div id="instructions" style="display: none;">
@@ -340,6 +440,17 @@
                 </div>
             </div>
             <div class="start-btn" id="start-btn">Enter the Loop</div>
+        </div>
+    </div>
+
+    <div id="game-fade">
+        <div id="game-fade-text">The crown was but glass. The throne but wood.</div>
+    </div>
+
+    <div id="pause-overlay">
+        <div id="pause-card">
+            <div class="pause-title">PAUSED</div>
+            <div class="pause-hint">Click to resume</div>
         </div>
     </div>
 

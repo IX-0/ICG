@@ -3,6 +3,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { physicsSystem } from '../engine/PhysicsSystem';
 import { PORTAL_CONFIG } from '../config/PortalConfig';
 import { IPortal } from '../interfaces/IPortal';
+import { assetLoader } from '../engine/AssetLoader';
 
 export interface PortalOptions {
   color: number;
@@ -41,9 +42,11 @@ export default class Portal implements IPortal {
     const portalGeo = new THREE.PlaneGeometry(this.width, this.height);
     const portalMat = new THREE.MeshBasicMaterial({
       map: this.renderTarget.texture,
-      fog: false // Prevent double-fogging (portal image already has its own fog)
+      fog: false, // Prevent double-fogging (portal image already has its own fog)
+      toneMapped: false // Pre-tone-mapped by the portal render pass
     });
     this.portalSurface = new THREE.Mesh(portalGeo, portalMat);
+    this.portalSurface.frustumCulled = false;
     this.mesh.add(this.portalSurface);
 
     // Corners (relative to the mesh center)
@@ -57,13 +60,29 @@ export default class Portal implements IPortal {
     this.casingGroup = new THREE.Group();
     this.mesh.add(this.casingGroup);
 
-    const frameGeo = new THREE.BoxGeometry(this.width + 0.3, 0.3, 0.3);
+    // Point light so the portal frame actually illuminates nearby geometry
+    const portalLight = new THREE.PointLight(options.color, 4, 8);
+    portalLight.position.set(0, 0, 0.5);
+    this.mesh.add(portalLight);
+
+    const FRAME_T = 0.1; // frame bar thickness
+    const frameGeo = new THREE.BoxGeometry(this.width + FRAME_T * 2, FRAME_T, FRAME_T);
     const frameMat = new THREE.MeshStandardMaterial({
-      color: options.color,
+      color: 0x6d4c32, // Match the rich brown wood of the boat
       emissive: options.color,
-      emissiveIntensity: 0.8,
-      metalness: 0.8,
-      roughness: 0.2
+      emissiveIntensity: 0.35,
+      metalness: 0.0,
+      roughness: 0.85
+    });
+
+    // Async load wood texture directly via assetLoader (cached and shared!)
+    assetLoader.fetchTexture('models/crown/textures/rough_wood_diff_2k.jpg').then((cachedTex) => {
+      const woodTex = cachedTex.clone();
+      woodTex.wrapS = woodTex.wrapT = THREE.RepeatWrapping;
+      woodTex.repeat.set(2, 1);
+      frameMat.map = woodTex;
+      frameMat.emissiveMap = woodTex; // Texture dictates emission pattern
+      frameMat.needsUpdate = true;
     });
 
     // Top
@@ -77,7 +96,7 @@ export default class Portal implements IPortal {
     this.borderGroup.add(bot);
 
     // Sides
-    const sideGeo = new THREE.BoxGeometry(0.3, this.height + 0.3, 0.3);
+    const sideGeo = new THREE.BoxGeometry(FRAME_T, this.height + FRAME_T * 2, FRAME_T);
     const sideL = new THREE.Mesh(sideGeo, frameMat);
     sideL.position.x = -this.width / 2;
     this.borderGroup.add(sideL);
@@ -166,6 +185,13 @@ export default class Portal implements IPortal {
     );
   }
 
+  public cleanupPhysics(): void {
+    if (this.rigidBody) {
+      physicsSystem.removeBody(this.rigidBody);
+      this.rigidBody = null;
+    }
+  }
+
   public updateRenderTarget(distance: number): void {
     const { minResolution, maxResolution, renderMinDist, renderMaxDist } = PORTAL_CONFIG;
 
@@ -209,6 +235,27 @@ export default class Portal implements IPortal {
       this.rigidBody = null;
     }
     this.renderTarget.dispose();
+    if (this.mesh) {
+      disposeObjectTree(this.mesh);
+    }
   }
+}
+
+function disposeObjectTree(object: THREE.Object3D): void {
+  object.traverse((child) => {
+    if ((child as THREE.Mesh).isMesh) {
+      const mesh = child as THREE.Mesh;
+      if (mesh.geometry) {
+        mesh.geometry.dispose();
+      }
+      if (mesh.material) {
+        const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        for (const mat of materials) {
+          // Do NOT dispose of textures, as they may be shared/cached (like rough_wood_diff_2k.jpg)
+          mat.dispose();
+        }
+      }
+    }
+  });
 }
 

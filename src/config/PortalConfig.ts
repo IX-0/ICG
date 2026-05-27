@@ -1,8 +1,8 @@
 export const PORTAL_CONFIG = {
-  width: 4.0,
-  height: 6.0,
-  colorA: 0x00ff00,
-  colorB: 0x0088ff,
+  width: 1.5,
+  height: 2.7,
+  colorA: 0xffaa00,
+  colorB: 0xff5500,
   // Teleportation
   teleportThreshold: 0.20,
   exitNudge: 0.50,

@@ -3,6 +3,7 @@ import { Grabbable } from './Grabbable';
 import { IPersistent } from '../interfaces/IPersistent';
 import { IObjectState } from '../interfaces/IState';
 import { physicsSystem } from '../engine/PhysicsSystem';
+import { audioManager } from '../engine/AudioManager';
 
 export default class TikiTorch extends Grabbable implements IPersistent {
   public persistentId: string = '';
@@ -13,6 +14,7 @@ export default class TikiTorch extends Grabbable implements IPersistent {
   private mixer: THREE.AnimationMixer | null = null;
   private flameActions: THREE.AnimationAction[] = [];
   private isModelReady: boolean = false;
+  public inSocket: boolean = false;
 
   constructor(persistentId: string = '') {
     super();
@@ -34,17 +36,22 @@ export default class TikiTorch extends Grabbable implements IPersistent {
    * targeting targets for items (like Lighter). 
    */
   public onInteract(_player: any, heldItem: any): void {
-    // GameEngine._handleUse returns early after calling onInteract, so lighter.onUse(torch)
-    // is never reached. We handle torch lighting here directly instead.
+    // 1. If held item is a lighter, light the torch and ignite the lighter
     if (heldItem && typeof heldItem.setIgnited === 'function') {
-      // Held item is a lighter — light the torch and trigger the lighter's flame
       this.setLit(true);
       heldItem.setIgnited(true);
+      return;
+    }
+    
+    // 2. If clicked directly (interacting) when not held (in socket or on ground)
+    if (!this.isHeld) {
+      this.setLit(true);
     }
   }
 
   protected override async onModelLoaded(model: THREE.Group): Promise<void> {
     model.scale.setScalar(1.0); // Reset or adjust scale if needed
+    model.traverse(c => { if ((c as THREE.Mesh).isMesh) { c.castShadow = true; c.receiveShadow = true; } });
     this.mesh.updateWorldMatrix(true, true);
 
     if (this.animations.length > 0) {
@@ -62,80 +69,59 @@ export default class TikiTorch extends Grabbable implements IPersistent {
     this.modelFlameParts = [];
     model.traverse((child) => {
       const name = child.name.toLowerCase();
-      // Matches Flame0_0, Flame1_0, Flame2_0, Flame3_0, fire_animation nodes, etc.
       if (name.includes('fire') || name.includes('flame')) {
         child.visible = false;
         this.modelFlameParts.push(child);
+        // Restore emissive on flame meshes (base class zeroes all GLB emissive)
+        if ((child as THREE.Mesh).isMesh) {
+          const mats = Array.isArray((child as THREE.Mesh).material)
+            ? (child as THREE.Mesh).material as THREE.MeshStandardMaterial[]
+            : [(child as THREE.Mesh).material as THREE.MeshStandardMaterial];
+          mats.forEach((m) => { if ('emissiveIntensity' in m) m.emissiveIntensity = 1; });
+        }
       }
     });
-    console.log(`[TikiTorch] Found ${this.modelFlameParts.length} flame part(s).`);
 
-    this.initPhysics();
+    if (!this.inSocket) {
+      this.initPhysics();
+    }
     this.isModelReady = true;
     
     // Sync the visual state with isLit
     this.setLit(this.isLit, true);
   }
 
-  private savedLinvel: any = null;
-  private savedAngvel: any = null;
+  public objectType: string = 'torch';
 
   public saveState(): IObjectState {
-    const worldPos = new THREE.Vector3();
-    const worldQuat = new THREE.Quaternion();
-    this.mesh.getWorldPosition(worldPos);
-    this.mesh.getWorldQuaternion(worldQuat);
-    const worldEuler = new THREE.Euler().setFromQuaternion(worldQuat);
-
-    const state: IObjectState = {
-      position: { x: worldPos.x, y: worldPos.y, z: worldPos.z },
-      rotation: { x: worldEuler.x, y: worldEuler.y, z: worldEuler.z },
-      metadata: { isLit: this.isLit },
-      isHeld: this.isHeld
-    };
-    
-    if (this.rigidBody) {
-      const linvel = this.rigidBody.linvel();
-      const angvel = this.rigidBody.angvel();
-      state.linearVelocity = { x: linvel.x, y: linvel.y, z: linvel.z };
-      state.angularVelocity = { x: angvel.x, y: angvel.y, z: angvel.z };
-    }
+    const state = this.saveGrabbableState(this.objectType);
+    state.metadata = { isLit: this.isLit, inSocket: this.inSocket };
     return state;
   }
 
   public loadState(state: IObjectState): void {
-    this.mesh.position.set(state.position.x, state.position.y, state.position.z);
-    this.mesh.rotation.set(state.rotation.x, state.rotation.y, state.rotation.z);
-    
-    if (state.metadata && state.metadata.isLit !== undefined) {
-      this.isLit = state.metadata.isLit;
-      if (this.isModelReady) {
-        this.setLit(this.isLit, true);
+    this.loadGrabbableState(state);
+    if (state.metadata) {
+      if (state.metadata.isLit !== undefined) {
+        this.isLit = state.metadata.isLit;
+        if (this.isModelReady) this.setLit(this.isLit, true);
+      }
+      if (state.metadata.inSocket !== undefined) {
+        this.inSocket = state.metadata.inSocket;
       }
     }
-
-    if (state.linearVelocity) this.savedLinvel = state.linearVelocity;
-    if (state.angularVelocity) this.savedAngvel = state.angularVelocity;
-    this.isHeld = state.isHeld || false;
   }
 
   public initPhysics(): void {
-    if (!physicsSystem.world) return;
+    if (!physicsSystem.world || this.inSocket) return;
     const { body, collider } = physicsSystem.addDynamicPrimitive(this.mesh, { type: 'cylinder', size: [1.0, 0.1] });
     this.rigidBody = body;
     this.collider = collider;
-
-    if (this.savedLinvel) {
-      this.rigidBody.setLinvel(this.savedLinvel, true);
-      this.savedLinvel = null;
-    }
-    if (this.savedAngvel) {
-      this.rigidBody.setAngvel(this.savedAngvel, true);
-      this.savedAngvel = null;
-    }
+    this.applySavedVelocities();
   }
 
   public onGrab(): void {
+    this.inSocket = false;
     super.onGrab();
   }
 
@@ -172,6 +158,7 @@ export default class TikiTorch extends Grabbable implements IPersistent {
     if (this.isLit) {
       this._enableFlame();
       this.flameActions.forEach(a => { a.reset(); a.play(); });
+      audioManager.play('fire-crackle');
     } else {
       this._disableFlame();
       this.flameActions.forEach(a => a.stop());
@@ -179,17 +166,25 @@ export default class TikiTorch extends Grabbable implements IPersistent {
   }
 
   private _enableFlame(): void {
-    // 1. Model parts
     this.modelFlameParts.forEach(p => p.visible = true);
 
-    // 2. Light
     if (!this.light) {
-      this.light = new THREE.PointLight(0xffaa00, 2.0, 12);
+      this.light = new THREE.PointLight(0xffaa00, 4.0, 12);
       this.light.position.set(0, 0.85, 0);
+      // Request a shadow slot; if none available the light still contributes colour
+      const lighting = (window as any).gameEngine?.world?.lighting;
+      if (lighting?.requestShadowSlot(this)) {
+        this.light.castShadow = true;
+        this.light.shadow.mapSize.set(512, 512);
+        this.light.shadow.camera.near = 0.1;
+        this.light.shadow.camera.far = 12;
+        this.light.shadow.bias = -0.005;
+        this.light.shadow.normalBias = 0.02;
+      }
       this.mesh.add(this.light);
     }
     this.light.visible = true;
-    this.light.intensity = 2.0;
+    this.light.intensity = 4.0;
   }
 
   private _disableFlame(): void {

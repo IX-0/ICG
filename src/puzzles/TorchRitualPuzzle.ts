@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { IPuzzleStage } from '../interfaces/IPuzzleStage';
-import TriggerZone from '../world/TriggerZone';
+import TriggerZone from '../world/interaction/TriggerZone';
 import TikiTorch from '../objects/TikiTorch';
 
 /**

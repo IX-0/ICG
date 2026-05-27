@@ -9,6 +9,8 @@ export interface IPersistent {
    * Unique identifier for this object instance in the game world.
    */
   persistentId: string;
+  /** The type alias for this object (e.g. 'torch', 'rock') for reconstruction. */
+  objectType: string;
 
   /**
    * Serializes the object's current state into a plain object.

@@ -18,18 +18,16 @@ export default class Chest extends Interactable implements IPersistent {
   // ── IPersistent ────────────────────────────────────────────────────────────
 
   public persistentId: string = '';
+  public objectType: string = 'chest';
 
   public saveState(): IObjectState {
-    return {
-      position: this.mesh.position.clone(),
-      rotation: { x: this.mesh.rotation.x, y: this.mesh.rotation.y, z: this.mesh.rotation.z },
-      metadata: { isOpen: this.isOpen, spawnedItem: this.spawnedItem }
-    };
+    const state = this.savePose(this.objectType);
+    state.metadata = { isOpen: this.isOpen, spawnedItem: this.spawnedItem };
+    return state;
   }
 
   public loadState(state: IObjectState): void {
-    this.mesh.position.set(state.position.x, state.position.y, state.position.z);
-    this.mesh.rotation.set(state.rotation.x, state.rotation.y, state.rotation.z);
+    this.loadPose(state);
     if (state.metadata) {
       if (state.metadata.isOpen) this.setOpen(true, true);
       this.spawnedItem = !!state.metadata.spawnedItem;
@@ -85,6 +83,13 @@ export default class Chest extends Interactable implements IPersistent {
     // before we build physics colliders and animation tracks.
     this.mesh.updateWorldMatrix(true, true);
 
+    model.traverse((child) => {
+      if ((child as THREE.Mesh).isMesh) {
+        child.castShadow = true;
+        child.receiveShadow = true;
+      }
+    });
+
     this._setupAnimations();
     this.initPhysics();
 
@@ -95,20 +100,13 @@ export default class Chest extends Interactable implements IPersistent {
   // ── Animations ────────────────────────────────────────────────────────────
 
   private _setupAnimations(): void {
-    if (!this.animations.length) {
-      console.warn(`[Chest] No animation clips found in "${this.modelPath}".`);
-      return;
-    }
+    if (!this.animations.length) return;
 
     // Root must be this.mesh (not just this.model) so that all nodes,
     // regardless of their nesting depth, are reachable by the mixer.
     this.mixer = new THREE.AnimationMixer(this.mesh);
 
     for (const clip of this.animations) {
-      console.log(
-        `[Chest] Clip "${clip.name}" ${clip.duration.toFixed(2)}s ` +
-        `| ${clip.tracks.length} track(s): ${clip.tracks.map(t => t.name).join(', ')}`
-      );
       const action = this.mixer.clipAction(clip);
       action.loop = THREE.LoopOnce;
       action.clampWhenFinished = true;
@@ -143,11 +141,6 @@ export default class Chest extends Interactable implements IPersistent {
         this.ownedColliders.push(collider);
       }
     });
-
-    console.log(
-      `[Chest] ${this.ownedColliders.length} collider(s), ` +
-      `${this.kinematicEntries.length} kinematic.`
-    );
   }
 
   /** Removes all owned colliders and kinematic bodies from the physics world. */
@@ -251,7 +244,7 @@ export default class Chest extends Interactable implements IPersistent {
   // ── Private ───────────────────────────────────────────────────────────────
 
   private _onFullyOpen(): void {
-    if (this.spawnedItem || !this.contents) return;
+    if (this.spawnedItem) return;
     this.spawnedItem = true;
     this.onOpen?.(this.contents);
   }

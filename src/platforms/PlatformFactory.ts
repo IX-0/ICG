@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import Chest from '../objects/Chest';
 import Skeleton from '../objects/Skeleton';
 import TikiTorch from '../objects/TikiTorch';
-import TriggerZone from '../world/TriggerZone';
+import TriggerZone from '../world/interaction/TriggerZone';
 import Throne from '../objects/Throne';
 import Mirror from '../objects/Mirror';
 import GardeningHoe from '../objects/GardeningHoe';
@@ -10,7 +10,14 @@ import Coffin from '../objects/Coffin';
 import PalmTree from '../objects/PalmTree';
 import Foliage, { FoliageType } from '../objects/Foliage';
 import Rock, { RockType } from '../objects/Rock';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import Shack from '../objects/Shack';
+import TorchSocket from '../objects/TorchSocket';
+import Boat from '../objects/Boat';
+import FlintAndSteel from '../objects/FlintAndSteel';
+import Crown from '../objects/Crown';
+import WaterBucket from '../objects/WaterBucket';
+import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
+import { assetLoader } from '../engine/AssetLoader';
 
 
 export type PlatformConfig = {
@@ -29,52 +36,65 @@ export default class PlatformFactory {
 
   constructor() {
     this.platformConfig = {
-      gravel:   { textureColor: 0x8b7c6e, propTypes: ['statue', 'crate', 'anchor'] },
-      sand:     { textureColor: 0xd4a574, propTypes: ['boat', 'rock', 'barrel'] },
+      gravel: { textureColor: 0x8b7c6e, propTypes: ['statue', 'crate', 'anchor'] },
+      sand: { textureColor: 0xd4a574, propTypes: ['boat', 'rock', 'barrel'] },
       volcanic: { textureColor: 0x3d3530, propTypes: ['crystal', 'vent', 'rock'] },
     };
   }
 
   createPlatformMesh(config: PlatformConfig) {
-    const geometry = new THREE.CylinderGeometry(config.size, config.size, config.height, 32);
-    const material = new THREE.MeshStandardMaterial({
-      roughness: 0.8,
-      metalness: 0.1,
-    });
+    const group = new THREE.Group();
+    (group as any).userData = { type: 'platform', platformConfig: config };
 
-    if (config.type === 'sand') {
-      material.color.setHex(0xffffff); // reset color so texture shows cleanly
-      const loader = new GLTFLoader();
-      loader.load('models/sand/stylized_beach_sand.glb', (gltf) => {
-        let foundTexture: THREE.Texture | undefined = undefined;
-        gltf.scene.traverse((child) => {
-          if ((child as THREE.Mesh).isMesh) {
-            const m = (child as THREE.Mesh).material as THREE.MeshStandardMaterial;
-            if (m && m.map && !foundTexture) {
-              foundTexture = m.map;
-            }
-          }
-        });
-        if (foundTexture) {
-          const tex = foundTexture as THREE.Texture;
-          tex.colorSpace = THREE.SRGBColorSpace;
-          tex.wrapS = THREE.RepeatWrapping;
-          tex.wrapT = THREE.RepeatWrapping;
-          tex.repeat.set(8, 8);
-          material.map = tex;
-          material.needsUpdate = true;
+    const task = assetLoader.fetchGltf('island/island_terrain.glb').then((gltf) => {
+      const terrain = SkeletonUtils.clone(gltf.scene);
+      terrain.scale.set(5, 5, 5);
+      // Move the model negatively in X, positively in Y, and keep Z
+      terrain.position.set(-15, 2.8, 0);
+      terrain.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh) {
+          child.castShadow = true;
+          child.receiveShadow = true;
         }
       });
-    } else {
-      material.map = this.createTexture(config.type);
-      material.color.setHex(this.platformConfig[config.type].textureColor);
-    }
 
-    const mesh = new THREE.Mesh(geometry, material);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    (mesh as any).userData = { type: 'platform', platformConfig: config };
-    return mesh;
+      // Update matrices to compute correct local positions relative to island center
+      group.updateMatrixWorld(true);
+
+      terrain.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh) {
+          const localPos = new THREE.Vector3();
+          child.getWorldPosition(localPos);
+
+          const dx1 = localPos.x - (-4.25);
+          const dz1 = localPos.z - (-40.79);
+          const distXZ1 = Math.sqrt(dx1 * dx1 + dz1 * dz1);
+
+          // Pre-baked dock boat coordinates
+          const dx2 = localPos.x - 2.39;
+          const dz2 = localPos.z - 0.58;
+          const distXZ2 = Math.sqrt(dx2 * dx2 + dz2 * dz2);
+
+          const name = child.name.toLowerCase();
+          
+          // Hide mesh if it contains 'boat' or is near either coordinate target
+          if (name.includes('boat') || distXZ1 < 3.0 || distXZ2 < 3.0) {
+            child.visible = false;
+            child.scale.set(0, 0, 0);
+            child.castShadow = false;
+            child.receiveShadow = false;
+          }
+        }
+      });
+
+      group.add(terrain);
+      if (typeof (group as any).onLoaded === 'function') {
+        (group as any).onLoaded();
+      }
+    });
+    assetLoader.trackInstance(task);
+
+    return group;
   }
 
 
@@ -183,7 +203,7 @@ export default class PlatformFactory {
   createProps(config: PlatformConfig) {
     const propTypes = this.platformConfig[config.type].propTypes;
     const positions = this.getPropPositions(config.size);
-    const props: THREE.Mesh[] = [];
+    const props: THREE.Object3D[] = [];
     propTypes.forEach((type: string, index: number) => {
       if (positions[index]) props.push(this.createProp(type, positions[index]));
     });
@@ -217,10 +237,11 @@ export default class PlatformFactory {
         geometry = new THREE.SphereGeometry(0.8, 16, 16);
         material = new THREE.MeshStandardMaterial({ color: 0x444444, metalness: 0.8 });
         break;
-      case 'boat':
-        geometry = new THREE.BoxGeometry(2, 0.8, 1);
-        material = new THREE.MeshStandardMaterial({ color: 0x8b4513 });
-        break;
+      case 'boat': {
+        const boat = new Boat();
+        boat.mesh.position.copy(position);
+        return boat.mesh;
+      }
       case 'rock':
         geometry = new THREE.IcosahedronGeometry(0.8, 2);
         material = new THREE.MeshStandardMaterial({ color: 0x666666 });
@@ -247,15 +268,15 @@ export default class PlatformFactory {
     (button as any).userData = { type: 'button', interactive: true };
     return button;
   }
- 
+
   createChest(position: THREE.Vector3, contents: any = null, persistentId: string = '') {
     const chest = new Chest(contents, persistentId);
     chest.mesh.position.copy(position);
     return chest;
   }
 
-  createSkeleton(position: THREE.Vector3, isBones: boolean = false, hasCrown: boolean = true, persistentId: string = '') {
-    const skeleton = new Skeleton(isBones, hasCrown, persistentId);
+  createSkeleton(position: THREE.Vector3, _isBones: boolean = false, hasCrown: boolean = true, persistentId: string = '') {
+    const skeleton = new Skeleton(hasCrown, persistentId);
     skeleton.mesh.position.copy(position);
     return skeleton;
   }
@@ -331,20 +352,56 @@ export default class PlatformFactory {
     return coffin;
   }
 
+  createShack(position: THREE.Vector3): Shack {
+    const shack = new Shack();
+    shack.mesh.position.copy(position);
+    return shack;
+  }
+
+  createTorchSocket(position: THREE.Vector3, socketIndex: number, persistentId: string = ''): TorchSocket {
+    const socket = new TorchSocket(socketIndex, persistentId);
+    socket.mesh.position.copy(position);
+    return socket;
+  }
+
+  createBoat(position: THREE.Vector3): Boat {
+    const boat = new Boat();
+    boat.mesh.position.copy(position);
+    return boat;
+  }
+
+  createFlintAndSteel(position: THREE.Vector3, persistentId: string = ''): FlintAndSteel {
+    const flint = new FlintAndSteel(persistentId);
+    flint.mesh.position.copy(position);
+    return flint;
+  }
+
   createRedX(position: THREE.Vector3, _persistentId: string = '') {
     const group = new THREE.Group();
     const mat = new THREE.MeshBasicMaterial({ color: 0xaa0000 });
     const geo = new THREE.BoxGeometry(1, 0.05, 0.2);
-    
+
     const bar1 = new THREE.Mesh(geo, mat);
     bar1.rotation.y = Math.PI / 4;
     group.add(bar1);
-    
+
     const bar2 = new THREE.Mesh(geo, mat);
     bar2.rotation.y = -Math.PI / 4;
     group.add(bar2);
-    
+
     group.position.copy(position);
     return group;
+  }
+
+  createCrown(persistentId: string = '') {
+    const crown = new Crown();
+    crown.persistentId = persistentId;
+    return crown;
+  }
+
+  createWaterBucket(position: THREE.Vector3, persistentId: string = '') {
+    const bucket = new WaterBucket(persistentId);
+    bucket.mesh.position.copy(position);
+    return bucket;
   }
 }

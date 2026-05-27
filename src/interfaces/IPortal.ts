@@ -9,6 +9,7 @@ export interface IPortal extends IUpdatable {
   onTraversed?: (isPlayer: boolean) => void;
   
   initPhysics(): void;
+  cleanupPhysics(): void;
   updateRenderTarget(distance: number): void;
   setPosition(v: THREE.Vector3): void;
   setRotation(euler: THREE.Euler): void;

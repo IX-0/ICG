@@ -92,6 +92,39 @@ export class PhysicsSystem implements IUpdatable {
     return this.world.createCollider(colliderDesc, body);
   }
 
+  /**
+   * Creates a fixed trimesh collider asynchronously to prevent main-thread freezing on massive island meshes.
+   */
+  public async addStaticTrimeshAsync(mesh: THREE.Mesh): Promise<RAPIER.Collider> {
+    PhysicsSystem.flushWorldMatrix(mesh);
+
+    const positionAttr = mesh.geometry.attributes.position;
+    const worldPositions = new Float32Array(positionAttr.count * 3);
+    const v = new THREE.Vector3();
+
+    const CHUNK_SIZE = 5000;
+    for (let i = 0; i < positionAttr.count; i++) {
+      v.fromBufferAttribute(positionAttr, i).applyMatrix4(mesh.matrixWorld);
+      worldPositions[i * 3]     = v.x;
+      worldPositions[i * 3 + 1] = v.y;
+      worldPositions[i * 3 + 2] = v.z;
+
+      // Yield to the main thread periodically to prevent freezing
+      if (i > 0 && i % CHUNK_SIZE === 0) {
+        await new Promise(resolve => setTimeout(resolve, 0));
+      }
+    }
+
+    const body = this.world.createRigidBody(
+      RAPIER.RigidBodyDesc.fixed().setTranslation(0, 0, 0)
+    );
+    const colliderDesc = RAPIER.ColliderDesc.trimesh(
+      worldPositions,
+      PhysicsSystem.getIndices(mesh.geometry)
+    );
+    return this.world.createCollider(colliderDesc, body);
+  }
+
   // ── Kinematic trimesh ──────────────────────────────────────────────────────
 
   /**
@@ -141,6 +174,45 @@ export class PhysicsSystem implements IUpdatable {
     const rot = mesh.getWorldQuaternion(new THREE.Quaternion());
     body.setNextKinematicTranslation({ x: pos.x, y: pos.y, z: pos.z });
     body.setNextKinematicRotation({ x: rot.x, y: rot.y, z: rot.z, w: rot.w });
+  }
+
+  // ── Dynamic convex hull ───────────────────────────────────────────────────
+
+  /**
+   * Creates a dynamic convex hull collider. Much faster than trimesh, decent fit for irregular shapes.
+   */
+  public addDynamicConvexHull(mesh: THREE.Mesh): { body: RAPIER.RigidBody; collider: RAPIER.Collider } {
+    PhysicsSystem.flushWorldMatrix(mesh);
+
+    const worldPos = new THREE.Vector3();
+    const worldQuat = new THREE.Quaternion();
+    const worldScale = new THREE.Vector3();
+    mesh.matrixWorld.decompose(worldPos, worldQuat, worldScale);
+
+    const positionAttr = mesh.geometry.attributes.position;
+    const scaledPositions: number[] = [];
+
+    for (let i = 0; i < positionAttr.count; i++) {
+      const v = new THREE.Vector3().fromBufferAttribute(positionAttr, i);
+      scaledPositions.push(v.x * worldScale.x, v.y * worldScale.y, v.z * worldScale.z);
+    }
+
+    const body = this.world.createRigidBody(
+      RAPIER.RigidBodyDesc.dynamic()
+        .setTranslation(worldPos.x, worldPos.y, worldPos.z)
+        .setRotation(worldQuat)
+    );
+    body.setLinearDamping(0.5);
+    body.setAngularDamping(1.0);
+
+    const colliderDesc = RAPIER.ColliderDesc.convexHull(new Float32Array(scaledPositions));
+    if (!colliderDesc) {
+      throw new Error('Failed to build convex hull collider desc from positions');
+    }
+    colliderDesc.setFriction(PHYSICS_CONFIG.friction).setRestitution(0.1);
+    const collider = this.world.createCollider(colliderDesc, body);
+
+    return { body, collider };
   }
 
   // ── Primitive colliders ────────────────────────────────────────────────────
