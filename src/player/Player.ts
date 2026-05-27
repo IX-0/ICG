@@ -1,8 +1,5 @@
 import * as THREE from 'three';
 import { Grabbable } from '../objects/Grabbable';
-import TikiTorch from '../objects/TikiTorch';
-import WaterBucket from '../objects/WaterBucket';
-import Lighter from '../objects/Lighter';
 import { PHYSICS_CONFIG } from '../config/PhysicsConfig';
 import { PLAYER_CONFIG } from '../config/PlayerConfig';
 import { physicsSystem } from '../engine/PhysicsSystem';
@@ -13,6 +10,7 @@ import { IPlayerState } from '../interfaces/IState';
 
 export default class Player implements IUpdatable, IPersistent {
   public persistentId: string = 'player_main';
+  public objectType: string = 'player';
 
   camera: THREE.PerspectiveCamera;
   public scene: THREE.Scene;
@@ -50,19 +48,30 @@ export default class Player implements IUpdatable, IPersistent {
   private isCrouching: boolean = false;
   private currentHeight: number = PLAYER_CONFIG.height;
 
+  private wakeUpTimer: number = 0;
+  private isWakingUp: boolean = false;
+  private hasWokenUp: boolean = false;
+
   constructor(scene: THREE.Scene, camera: THREE.PerspectiveCamera, domElement: HTMLElement = document.body) {
     this.scene = scene;
     this.camera = camera;
     this.baseFov = camera.fov;
     this.domElement = domElement;
-    this.position = new THREE.Vector3(0, PLAYER_CONFIG.height + 0.5, 8);
+    this.position = new THREE.Vector3(-10, PLAYER_CONFIG.height + 0.5, -37);
     this.velocity = new THREE.Vector3();
     this.camera.position.copy(this.position);
-
-    this.camera.position.copy(this.position);
+    this.camera.position.y = 0.1; // camera Y starts very low (lying down flat on ground)
+    this.currentYaw = this.targetYaw = -Math.PI / 2;
+    this.camera.rotation.set(0, -Math.PI / 2, 0, 'YXZ');
 
     this._initPointerLock();
     this._initKeyboard();
+  }
+
+  public startWakeUp(): void {
+    if (this.hasWokenUp || this.isWakingUp) return;
+    this.isWakingUp = true;
+    this.wakeUpTimer = 0;
   }
 
   public initPhysics(): void {
@@ -75,25 +84,21 @@ export default class Player implements IUpdatable, IPersistent {
     const radius = PLAYER_CONFIG.radius;
     const halfHeight = (PLAYER_CONFIG.height / 2) - radius;
     const colDesc = RAPIER.ColliderDesc.capsule(halfHeight, radius)
-      .setCollisionGroups(0x0001FFFF);
+      .setCollisionGroups(0x0001FFFF)
+      .setFriction(0.0);
     this.collider = physicsSystem.world.createCollider(colDesc, this.playerBody);
 
     this.characterController = physicsSystem.world.createCharacterController(0.01);
     this.characterController.setUp({ x: 0, y: 1, z: 0 });
     this.characterController.setApplyImpulsesToDynamicBodies(true);
+    this.characterController.setMaxSlopeClimbAngle(Math.PI / 4.5); // 40 degrees max climb
+    this.characterController.setMinSlopeSlideAngle(Math.PI / 4.5); // slide down if steeper than 40 degrees
   }
 
   private _initPointerLock(): void {
     const onPointerLockChange = () => {
       this.isLocked = document.pointerLockElement === this.domElement;
-
-      const instructions = document.getElementById('instructions');
-      if (instructions) instructions.style.display = this.isLocked ? 'none' : 'flex';
-
-      const startBtn = document.getElementById('start-btn');
-      if (startBtn && !this.isLocked) startBtn.innerText = 'Resume Game';
-
-      // Sync Euler targets to current rotation when locking
+      // Sync Euler targets to current rotation when locking so camera doesn't snap
       if (this.isLocked) {
         this.currentYaw = this.targetYaw = this.camera.rotation.y;
         this.currentPitch = this.targetPitch = this.camera.rotation.x;
@@ -108,6 +113,7 @@ export default class Player implements IUpdatable, IPersistent {
 
     document.addEventListener('mousemove', (e: MouseEvent) => {
       if (!this.isLocked) return;
+      if (this.isWakingUp || !this.hasWokenUp) return; // Prevent looking around while waking up!
       const sensitivity = 0.002;
       this.mouseDeltaX -= e.movementX * sensitivity;
       this.mouseDeltaY -= e.movementY * sensitivity;
@@ -116,6 +122,7 @@ export default class Player implements IUpdatable, IPersistent {
 
   private _initKeyboard(): void {
     document.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.code === 'KeyW') e.preventDefault();
       this.keys[e.code] = true;
       if (e.code === 'Space' && this.isOnGround) {
         this.velocity.y = PLAYER_CONFIG.jumpForce;
@@ -159,14 +166,15 @@ export default class Player implements IUpdatable, IPersistent {
   public grab(item: Grabbable): void {
     if (this.heldItem) this.drop();
     this.heldItem = item;
-    // 1. Parent to camera and set visual hand position first
+    
+    // 1. Call onGrab to remove physics body BEFORE changing the mesh's parent/transform
+    item.onGrab();
+
+    // 2. Parent to camera and set visual hand position
     this.camera.add(item.mesh);
     item.mesh.position.copy(item.holdPosition);
     item.mesh.rotation.copy(item.holdRotation);
     item.mesh.updateMatrixWorld(true);
-
-    // 2. Now call onGrab, which will teleport the physics body to the current world position (the hand)
-    item.onGrab();
 
     // Ensure it updates its matrix
     item.mesh.updateMatrix();
@@ -259,6 +267,16 @@ export default class Player implements IUpdatable, IPersistent {
     this.camera.rotation.order = 'YXZ';
     this.camera.rotation.x = this.currentPitch;
     this.camera.rotation.y = this.currentYaw;
+    
+    if (this.isWakingUp) {
+      const t = Math.min(this.wakeUpTimer / 2.0, 1.0);
+      const smoothT = t * t * (3 - 2 * t);
+      this.camera.rotation.z = THREE.MathUtils.lerp(Math.PI / 2, 0, smoothT);
+    } else if (!this.hasWokenUp) {
+      this.camera.rotation.z = Math.PI / 2;
+    } else {
+      this.camera.rotation.z = 0;
+    }
  
     const targetHeight = this.isCrouching ? this.CROUCH_HEIGHT : this.PLAYER_HEIGHT;
     this.currentHeight += (targetHeight - this.currentHeight) * 15 * finalDt;
@@ -275,15 +293,21 @@ export default class Player implements IUpdatable, IPersistent {
     forward.normalize();
     right.normalize();
  
-    if (this.keys['KeyW'] || this.keys['ArrowUp']) move.add(forward);
-    if (this.keys['KeyS'] || this.keys['ArrowDown']) move.add(forward.clone().negate());
-    if (this.keys['KeyA'] || this.keys['ArrowLeft']) move.add(right.clone().negate());
-    if (this.keys['KeyD'] || this.keys['ArrowRight']) move.add(right);
+    if (this.isWakingUp || !this.hasWokenUp) {
+      // Stand completely still during wake-up animation
+      move.set(0, 0, 0);
+    } else {
+      if (this.keys['KeyW'] || this.keys['ArrowUp']) move.add(forward);
+      if (this.keys['KeyS'] || this.keys['ArrowDown']) move.add(forward.clone().negate());
+      if (this.keys['KeyA'] || this.keys['ArrowLeft']) move.add(right.clone().negate());
+      if (this.keys['KeyD'] || this.keys['ArrowRight']) move.add(right);
+    }
  
     if (move.lengthSq() > 0) move.normalize();
     move.multiplyScalar(this.isCrouching ? PLAYER_CONFIG.moveSpeed * 0.5 : PLAYER_CONFIG.moveSpeed);
  
-    this.velocity.y += (-PHYSICS_CONFIG.gravity) * finalDt;
+    const currentGravity = this.velocity.y > 0 ? PHYSICS_CONFIG.gravity * 1.3 : PHYSICS_CONFIG.gravity;
+    this.velocity.y += (-currentGravity) * finalDt;
  
     if (this.characterController && this.collider && this.playerBody) {
       const desiredTranslation = new THREE.Vector3(
@@ -295,9 +319,22 @@ export default class Player implements IUpdatable, IPersistent {
       this.characterController.computeColliderMovement(this.collider, desiredTranslation);
       const computedMove = this.characterController.computedMovement();
  
+      let moveY = computedMove.y;
+      if (this.velocity.y <= 0 && moveY > 0) {
+        const horizontalDist = Math.sqrt(computedMove.x * computedMove.x + computedMove.z * computedMove.z);
+        if (horizontalDist > 0) {
+          const slope = moveY / horizontalDist;
+          if (slope > Math.tan(Math.PI / 4.5)) { // 40 degrees limit
+            moveY = 0;
+          }
+        } else {
+          moveY = 0;
+        }
+      }
+ 
       const newPos = this.playerBody.translation();
       newPos.x += computedMove.x;
-      newPos.y += computedMove.y;
+      newPos.y += moveY;
       newPos.z += computedMove.z;
  
       this.playerBody.setNextKinematicTranslation(newPos);
@@ -337,7 +374,33 @@ export default class Player implements IUpdatable, IPersistent {
     // If half height = 0.85, the center is y=0.85, eyes at top
     // For simplicity, just place camera exactly there for now, or offset by currentHeight / 2
     this.camera.position.copy(this.position);
-    this.camera.position.y += (this.currentHeight / 2) - 0.2; // roughly eye level above center
+    
+    if (this.isWakingUp) {
+      this.wakeUpTimer += finalDt;
+      const duration = 2.0; // 2 seconds transition
+      const t = Math.min(this.wakeUpTimer / duration, 1.0);
+      const smoothT = t * t * (3 - 2 * t); // smoothstep easing
+      
+      const standardEyeHeight = (this.currentHeight / 2) - 0.2;
+      const startEyeHeight = -0.75; // sets Y to ~0.1 lying flat on ground
+      const currentEyeHeight = THREE.MathUtils.lerp(startEyeHeight, standardEyeHeight, smoothT);
+      
+      this.camera.position.y += currentEyeHeight;
+
+      // Diagonal rolling arc: offset along Z axis (sideways relative to look direction)
+      const horizontalOffset = THREE.MathUtils.lerp(-1.2, 0, smoothT);
+      this.camera.position.z += horizontalOffset;
+
+      if (t >= 1.0) {
+        this.isWakingUp = false;
+        this.hasWokenUp = true;
+      }
+    } else if (!this.hasWokenUp) {
+      this.camera.position.y = 0.1; // Stay flat on ground before wake-up triggers
+      this.camera.position.z += -1.2; // Shifted flat to the side
+    } else {
+      this.camera.position.y += (this.currentHeight / 2) - 0.2; // roughly eye level above center
+    }
  
     // Apply Warp Effect (FOV distortion and slight ripple)
     if (this.warpEffectTimer > 0) {

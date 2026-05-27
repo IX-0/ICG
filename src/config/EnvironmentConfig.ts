@@ -11,18 +11,19 @@ export const ENV_CONFIG = {
     orbitRadius: 200,    // radius of the sun/moon orbit sphere
     orbitTilt: 0.45,     // Z-axis tilt
     color: 0xfff0e0,
-    maxIntensity: 4,    // peak midday multiplier
-    shadowMapSize: 2048,
+    maxIntensity: 4,    // peak midday. ACES exposure 1.2 + this gives realistic outdoor brightness
+    shadowMapSize: 4096,
     shadowCameraExtent: 80,    // half-extent of shadow frustum (square)
-    shadowBias: -0.001,
+    shadowBias: -0.0001,
   },
 
+  // ── Moon ────────────────────────────────────────────────────────────────────
   // ── Moon ────────────────────────────────────────────────────────────────────
   moon: {
     fixedAngleDeg: 135,
     orbitTilt: -0.2,     // different Z-axis tilt than sun
     lightColor: 0xccccff,
-    lightIntensity: 1,   // max moon light when above horizon
+    lightIntensity: 2.5,   // max moon light when above horizon (boosted for brightness)
     phaseLightIntensity: 1.2,  // dedicated phase-shading layer light
     meshRadius: 40,
     glowBaseSize: 220,   // sprite glow base scale
@@ -33,20 +34,11 @@ export const ENV_CONFIG = {
 
   // ── Ambient Light ───────────────────────────────────────────────────────────
   ambient: {
-    intensity: 2,
+    intensity: 1.5,      // Boosted ambient fill
     // Colors as [r, g, b] in linear 0-1 space
     dayColor: [0.85, 0.97, 1.0],   // bright daytime cyan-white
-    nightColor: [0.28, 0.32, 0.55],  // visible dark blue
+    nightColor: [0.60, 0.65, 0.90],  // visible bright lunar blue ambient
     sunsetColor: [1.0, 0.60, 0.30],  // warm sunset/sunrise orange
-  },
-
-  // ── Hemisphere Light ────────────────────────────────────────────────────────
-  hemisphere: {
-    intensity: 2,
-    daySkyColor: [0.55, 0.82, 1.0],
-    dayGroundColor: [0.40, 0.32, 0.18],
-    nightSkyColor: [0.18, 0.20, 0.40],
-    nightGroundColor: [0.10, 0.10, 0.18],
   },
 
   // ── Atmosphere (Sky shader) ──────────────────────────────────────────────────
@@ -74,13 +66,14 @@ export const ENV_CONFIG = {
     smallCount: 3500, smallSize: 3, smallBrightness: 0.7,
     mediumCount: 1200, mediumSize: 5, mediumBrightness: 0.9,
     largeCount: 120, largeSize: 10, largeBrightness: 1.0,
-    sphereRadius: 1500,
+    sphereRadius: 1000,
   },
 
   // ── Tone Mapping ────────────────────────────────────────────────────────────
+  // ACES base exposure. Per-island fine-tuning via IslandLightingPreset.exposureBias.
   toneMapping: {
-    dayExposure: 0.30,
-    nightExposure: 0.40,
+    dayExposure: 1.2,
+    nightExposure: 1.6,   // brighter at night to compensate for low light
   },
 };
 
@@ -92,7 +85,6 @@ export function resetEnvConfig(): void {
   Object.assign(ENV_CONFIG.sun, JSON.parse(JSON.stringify(INITIAL_ENV_CONFIG.sun)));
   Object.assign(ENV_CONFIG.moon, JSON.parse(JSON.stringify(INITIAL_ENV_CONFIG.moon)));
   Object.assign(ENV_CONFIG.ambient, JSON.parse(JSON.stringify(INITIAL_ENV_CONFIG.ambient)));
-  Object.assign(ENV_CONFIG.hemisphere, JSON.parse(JSON.stringify(INITIAL_ENV_CONFIG.hemisphere)));
   Object.assign(ENV_CONFIG.atmosphere, JSON.parse(JSON.stringify(INITIAL_ENV_CONFIG.atmosphere)));
   Object.assign(ENV_CONFIG.fog, JSON.parse(JSON.stringify(INITIAL_ENV_CONFIG.fog)));
   Object.assign(ENV_CONFIG.stars, JSON.parse(JSON.stringify(INITIAL_ENV_CONFIG.stars)));

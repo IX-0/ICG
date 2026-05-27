@@ -9,6 +9,7 @@ import { PORTAL_CONFIG, resetPortalConfig } from '../config/PortalConfig';
 import { PLAYER_CONFIG, resetPlayerConfig } from '../config/PlayerConfig';
 import { IGameController } from '../interfaces/IGameController';
 import { IUpdatable } from '../interfaces/IUpdatable';
+import { audioManager } from './AudioManager';
  
 export default class UIManager implements IUpdatable {
   private gui: GUI;
@@ -17,8 +18,17 @@ export default class UIManager implements IUpdatable {
   private msLabel: HTMLDivElement;
   private ramLabel: HTMLDivElement;
   private vramLabel: HTMLDivElement;
+  private posAbsLabel: HTMLDivElement;
+  private posRelLabel: HTMLDivElement;
   private objectiveLabel: HTMLDivElement;
   private renderer: THREE.WebGLRenderer;
+
+  private gimbalCanvas: HTMLCanvasElement;
+  private gimbalCtx: CanvasRenderingContext2D;
+  private _debugDefaultsApplied = false;
+  private _gQ = new THREE.Quaternion();
+  private _gQInv = new THREE.Quaternion();
+  private _gV = new THREE.Vector3();
 
   // Callbacks
   public onTimeChange?: (h: number) => void;
@@ -56,7 +66,7 @@ export default class UIManager implements IUpdatable {
       // Reset debug helpers
       Object.keys(this.guiState.debug).forEach(key => {
         (this.guiState.debug as any)[key] = false;
-        this.gameController.toggleDebug(key, false);
+        this.gameController.debugManager.toggleDebug(key, false);
       });
 
       this.refreshDisplay();
@@ -122,9 +132,37 @@ export default class UIManager implements IUpdatable {
     this.ramLabel = createMetricLabel('40px', '#79ff00');
     this.vramLabel = createMetricLabel('70px', '#ff00ea');
 
+    const createBottomLabel = (bottom: string, color: string) => {
+      const el = document.createElement('div');
+      Object.assign(el.style, {
+        position: 'absolute',
+        bottom: bottom,
+        left: '10px',
+        padding: '4px 8px',
+        fontFamily: "'Space Mono', monospace",
+        fontSize: '11px',
+        color: color,
+        background: 'rgba(0, 0, 0, 0.7)',
+        backdropFilter: 'blur(4px)',
+        borderLeft: `3px solid ${color}`,
+        pointerEvents: 'none',
+        zIndex: '10000',
+        display: 'none',
+        minWidth: '200px',
+        textAlign: 'left'
+      });
+      document.body.appendChild(el);
+      return el;
+    };
+
+    this.posAbsLabel = createBottomLabel('40px', '#ffaa00');
+    this.posRelLabel = createBottomLabel('10px', '#00aaff');
+
     this.msLabel.innerText = 'LATENCY: 0.00ms';
     this.ramLabel.innerText = 'RAM: 0MB';
     this.vramLabel.innerText = 'VRAM: 0MB';
+    this.posAbsLabel.innerText = 'ABS POS: [0.0, 0.0, 0.0]';
+    this.posRelLabel.innerText = 'REL POS: [0.0, 0.0, 0.0]';
 
     this.objectiveLabel = document.createElement('div');
     Object.assign(this.objectiveLabel.style, {
@@ -150,6 +188,23 @@ export default class UIManager implements IUpdatable {
     document.body.appendChild(this.objectiveLabel);
 
     this._setupGUI();
+
+    // Gimbal overlay
+    this.gimbalCanvas = document.createElement('canvas');
+    this.gimbalCanvas.width = 80;
+    this.gimbalCanvas.height = 80;
+    Object.assign(this.gimbalCanvas.style, {
+      position: 'fixed',
+      bottom: '10px',
+      right: '10px',
+      display: 'none',
+      zIndex: '10001',
+      borderRadius: '50%',
+      background: 'rgba(0,0,0,0.5)',
+      pointerEvents: 'none',
+    });
+    document.body.appendChild(this.gimbalCanvas);
+    this.gimbalCtx = this.gimbalCanvas.getContext('2d')!;
   }
 
   private _cfg(): void {
@@ -186,7 +241,7 @@ export default class UIManager implements IUpdatable {
 
     // Sun
     const sunFolder = env.addFolder('Sun');
-    sunFolder.add(ENV_CONFIG.sun, 'maxIntensity', 0, 5, 0.01).name('Max Intensity').onChange(() => this._cfg());
+    sunFolder.add(ENV_CONFIG.sun, 'maxIntensity', 0, 8, 0.05).name('Max Intensity').onChange(() => this._cfg());
     sunFolder.add(ENV_CONFIG.sun, 'orbitRadius', 50, 500, 1).name('Orbit Radius').onChange(() => this._cfg());
     sunFolder.add(ENV_CONFIG.sun, 'orbitTilt', -1, 1, 0.01).name('Orbit Tilt (Z)').onChange(() => this._cfg());
     sunFolder.close();
@@ -218,15 +273,6 @@ export default class UIManager implements IUpdatable {
     addRGB(ambFolder, ENV_CONFIG.ambient.nightColor, 'Night');
     addRGB(ambFolder, ENV_CONFIG.ambient.sunsetColor, 'Sunset');
     ambFolder.close();
-
-    // Hemisphere
-    const hemiFolder = env.addFolder('Hemisphere');
-    hemiFolder.add(ENV_CONFIG.hemisphere, 'intensity', 0, 3, 0.01).name('Intensity').onChange(() => this._cfg());
-    addRGB(hemiFolder, ENV_CONFIG.hemisphere.daySkyColor, 'Day Sky');
-    addRGB(hemiFolder, ENV_CONFIG.hemisphere.dayGroundColor, 'Day Ground');
-    addRGB(hemiFolder, ENV_CONFIG.hemisphere.nightSkyColor, 'Night Sky');
-    addRGB(hemiFolder, ENV_CONFIG.hemisphere.nightGroundColor, 'Night Ground');
-    hemiFolder.close();
 
     // Atmosphere
     const atmFolder = env.addFolder('Atmosphere');
@@ -309,12 +355,12 @@ export default class UIManager implements IUpdatable {
     rendering.add(PORTAL_CONFIG, 'maxResolution', 512, 4096, 512).name('Max Res');
     portalTuning.close();
 
-    objects.add({ spawn: () => { this.gameController.spawnPortalPair(); } }, 'spawn').name('Spawn Portal Pair');
+    objects.add({ spawn: () => { this.gameController.debugManager.spawnPortalPair(); } }, 'spawn').name('Spawn Portal Pair');
 
     // Props
     objects.add(this.guiState, 'spawnObjectType', {
       'Tiki Torch': 'torch',
-      'Lighter': 'lighter',
+      'Flint and Steel': 'lighter',
       'Water Bucket': 'bucket',
       'Chest': 'chest',
       'Crown': 'crown',
@@ -324,16 +370,38 @@ export default class UIManager implements IUpdatable {
 
     objects.add({
       spawnObj: () => {
-        this.gameController.spawnObject(this.guiState.spawnObjectType);
+        this.gameController.debugManager.spawnObject(this.guiState.spawnObjectType);
       }
     }, 'spawnObj').name('Spawn Item');
 
     objects.close();
 
 
+    // ── Audio Folder ──────────────────────────────────────────────────
+    const audioFolder = gui.addFolder('Audio');
+    const audioState = {
+      masterEnabled: true,
+      musicVol:   audioManager.getVolume('music'),
+      ambientVol: audioManager.getVolume('ambient'),
+      sfxVol:     audioManager.getVolume('sfx'),
+    };
+    audioFolder.add(audioState, 'masterEnabled').name('Enabled').onChange((v: boolean) => {
+      audioManager.setEnabled(v);
+    });
+    audioFolder.add(audioState, 'musicVol', 0, 1, 0.01).name('Music').onChange((v: number) => {
+      audioManager.setVolume('music', v);
+    });
+    audioFolder.add(audioState, 'ambientVol', 0, 1, 0.01).name('Ambient').onChange((v: number) => {
+      audioManager.setVolume('ambient', v);
+    });
+    audioFolder.add(audioState, 'sfxVol', 0, 1, 0.01).name('SFX').onChange((v: number) => {
+      audioManager.setVolume('sfx', v);
+    });
+    audioFolder.close();
+
     // ── Debugging Folder ───────────────────────────────────────────────
     const debug = gui.addFolder('Debugging');
-    const _d = (item: string) => (val: boolean) => { this.gameController.toggleDebug(item, val); };
+    const _d = (item: string) => (val: boolean) => { this.gameController.debugManager.toggleDebug(item, val); };
 
     debug.add(this.guiState.debug, 'axes').name('Axes Helper').onChange(_d('axes'));
     debug.add(this.guiState.debug, 'grid').name('Grid Helper').onChange(_d('grid'));
@@ -345,9 +413,9 @@ export default class UIManager implements IUpdatable {
     
     // ── Story Debug Folder ──────────────────────────────────────────────
     const storyDebug = gui.addFolder('Story Debug');
-    storyDebug.add({ jumpRise: () => { this.gameController.jumpToPlatform(0); } }, 'jumpRise').name('Jump to Rise (Island 1)');
-    storyDebug.add({ jumpReturn: () => { this.gameController.jumpToPlatform(2); } }, 'jumpReturn').name('Jump to Return (Island 3)');
-    storyDebug.add({ spawnExtra: () => { this.gameController.spawnExtraTorch(); } }, 'spawnExtra').name('Spawn 4th Torch (Simulate)');
+    storyDebug.add({ jumpRise: () => { this.gameController.debugManager.jumpToPlatform(0); } }, 'jumpRise').name('Jump to Rise (Island 1)');
+    storyDebug.add({ jumpReturn: () => { this.gameController.debugManager.jumpToPlatform(2); } }, 'jumpReturn').name('Jump to Return (Island 3)');
+    storyDebug.add({ spawnExtra: () => { this.gameController.debugManager.spawnExtraTorch(); } }, 'spawnExtra').name('Spawn 4th Torch (Simulate)');
     storyDebug.close();
   }
 
@@ -386,6 +454,19 @@ export default class UIManager implements IUpdatable {
     const estVRAM = Math.round((textures * 16) + (geometries * 0.5)); 
     
     this.vramLabel.innerText = `VRAM: ~${estVRAM}MB (${textures} TEX | ${geometries} GEO)`;
+
+    this._updateGimbal();
+
+    // Position updates
+    const playerPos = this.gameController.player.camera.position;
+    const px = playerPos.x.toFixed(2);
+    const py = playerPos.y.toFixed(2);
+    const pz = playerPos.z.toFixed(2);
+    this.posAbsLabel.innerText = `ABS POS: [${px}, ${py}, ${pz}]`;
+
+    const islandIndex = Math.round(playerPos.x / 1000);
+    const rx = (playerPos.x - islandIndex * 1000).toFixed(2);
+    this.posRelLabel.innerText = `REL POS: [${rx}, ${py}, ${pz}]`;
   }
 
   public toggleF3(): void {
@@ -401,6 +482,74 @@ export default class UIManager implements IUpdatable {
     this.msLabel.style.display = display;
     this.ramLabel.style.display = display;
     this.vramLabel.style.display = display;
+    this.posAbsLabel.style.display = display;
+    this.posRelLabel.style.display = display;
+    this.gimbalCanvas.style.display = display;
+
+    if (visible && !this._debugDefaultsApplied) {
+      this._debugDefaultsApplied = true;
+      const defaults: (keyof typeof this.guiState.debug)[] = ['axes', 'grid'];
+      for (const key of defaults) {
+        this.guiState.debug[key] = true;
+        this.gameController.debugManager.toggleDebug(key, true);
+      }
+      this.refreshDisplay();
+    }
+  }
+
+  private _updateGimbal(): void {
+    const ctx = this.gimbalCtx;
+    const cam = this.gameController.player.camera;
+    const cx = 40, cy = 40, r = 28;
+
+    ctx.clearRect(0, 0, 80, 80);
+
+    cam.getWorldQuaternion(this._gQ);
+    this._gQInv.copy(this._gQ).invert();
+
+    const axes = [
+      { x: 1, y: 0, z: 0, pos: '#ff4444', neg: '#662222', label: '+X' },
+      { x: 0, y: 1, z: 0, pos: '#44ff44', neg: '#226622', label: '+Y' },
+      { x: 0, y: 0, z: 1, pos: '#5599ff', neg: '#223366', label: '+Z' },
+    ];
+
+    const projected = axes.map(a => {
+      this._gV.set(a.x, a.y, a.z).applyQuaternion(this._gQInv);
+      return { ...a, sx: this._gV.x, sy: -this._gV.y, depth: -this._gV.z };
+    });
+
+    // Draw back-facing first
+    projected.sort((a, b) => a.depth - b.depth);
+
+    for (const p of projected) {
+      const ex = cx + p.sx * r;
+      const ey = cy + p.sy * r;
+      const isFront = p.depth > 0;
+
+      ctx.globalAlpha = isFront ? 1.0 : 0.3;
+      ctx.strokeStyle = isFront ? p.pos : p.neg;
+      ctx.lineWidth = isFront ? 2.5 : 1.5;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(ex, ey);
+      ctx.stroke();
+
+      ctx.fillStyle = isFront ? p.pos : p.neg;
+      ctx.beginPath();
+      ctx.arc(ex, ey, isFront ? 4 : 2.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      if (isFront) {
+        ctx.font = 'bold 9px monospace';
+        ctx.fillText(p.label, ex + p.sx * 6, ey + p.sy * 6 + 3);
+      }
+    }
+
+    ctx.globalAlpha = 1.0;
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(cx, cy, 2.5, 0, Math.PI * 2);
+    ctx.fill();
   }
 
   updateHUD(h: number): void {

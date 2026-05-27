@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { IPuzzleStage } from '../interfaces/IPuzzleStage';
 import GardeningHoe from '../objects/GardeningHoe';
 import Coffin from '../objects/Coffin';
+import { audioManager } from '../engine/AudioManager';
 
 /**
  * Stage 1: The Tools
@@ -51,6 +52,7 @@ export class TragedyDigStage implements IPuzzleStage {
   onComplete() {
     console.log("Tragedy: The coffin is revealed.");
     this.coffin.setVisible(true);
+    audioManager.play('dig-shovel');
   }
 }
 
@@ -74,5 +76,6 @@ export class TragedyFinalStage implements IPuzzleStage {
 
   onComplete() {
     console.log("Tragedy: The cycle ends.");
+    audioManager.play('coffin-close');
   }
 }

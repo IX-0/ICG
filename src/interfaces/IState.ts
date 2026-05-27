@@ -2,7 +2,14 @@
  * Defines the persistent state for individual game objects.
  */
 export interface IObjectState {
-  /** Map-relative or platform-relative position. */
+  /** 
+   * The index of the island this object belongs to or is currently sitting on.
+   * Used for calculating island-relative positions.
+   */
+  islandIndex: number;
+  /** The type alias of the object (e.g. 'torch', 'rock') for reconstruction. */
+  type: string;
+  /** Island-relative position (offset from island center). */
   position: { x: number; y: number; z: number };
   /** Euler rotation in radians. */
   rotation: { x: number; y: number; z: number };

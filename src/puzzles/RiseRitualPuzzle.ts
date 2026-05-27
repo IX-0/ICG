@@ -2,6 +2,7 @@ import { IPuzzleStage } from '../interfaces/IPuzzleStage';
 import Skeleton from '../objects/Skeleton';
 import Throne from '../objects/Throne';
 import Crown from '../objects/Crown';
+import { audioManager } from '../engine/AudioManager';
 
 /**
  * Stage 1: Find the Crown
@@ -18,9 +19,7 @@ export class RiseFindCrownStage implements IPuzzleStage {
   }
 
   update(_dt: number) {
-    if (this.skeleton.getIsBones()) {
-      this.isCompleted = true;
-    }
+    // Completion is event-driven: RiseIsland.ts sets isCompleted via onInteractTakeCrown
   }
   
   onComplete() {
@@ -45,12 +44,12 @@ export class RiseThroneStage implements IPuzzleStage {
   }
 
   update(_dt: number) {
-    if (this.throne.getHasCrown()) {
-      this.isCompleted = true;
-    }
+    // Completion is event-driven: throne.onCrownPlaced is wired in onEnter()
   }
 
   onComplete() {
     console.log("Rise: Sequence complete! The path forward is revealed.");
+    audioManager.play('crown-chime');
+    audioManager.play('portal-hum');
   }
 }

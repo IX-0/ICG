@@ -8,6 +8,7 @@ import { physicsSystem } from '../engine/PhysicsSystem';
 
 export default class Coffin extends Interactable implements IPersistent {
   public persistentId: string = '';
+  public objectType: string = 'coffin';
   public onClose?: () => void;
 
   private isClosed: boolean = false;
@@ -36,19 +37,13 @@ export default class Coffin extends Interactable implements IPersistent {
   }
 
   public saveState(): IObjectState {
-    return {
-      position: { x: this.mesh.position.x, y: this.mesh.position.y, z: this.mesh.position.z },
-      rotation: { x: this.mesh.rotation.x, y: this.mesh.rotation.y, z: this.mesh.rotation.z },
-      metadata: {
-        isClosed: this.isClosed,
-        isVisible: this.isVisible
-      }
-    };
+    const state = this.savePose(this.objectType);
+    state.metadata = { isClosed: this.isClosed, isVisible: this.isVisible };
+    return state;
   }
 
   public loadState(state: IObjectState): void {
-    this.mesh.position.set(state.position.x, state.position.y, state.position.z);
-    this.mesh.rotation.set(state.rotation.x, state.rotation.y, state.rotation.z);
+    this.loadPose(state);
     if (state.metadata) {
       this.isClosed = !!state.metadata.isClosed;
       this.isVisible = !!state.metadata.isVisible;

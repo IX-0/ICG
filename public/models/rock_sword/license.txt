@@ -1,0 +1,11 @@
+Model Information:
+* title:	The Sword in the Stone
+* source:	https://sketchfab.com/3d-models/the-sword-in-the-stone-2e37bb0e5eea40cdad41dc3e865b67cc
+* author:	Helley (https://sketchfab.com/Helley)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "The Sword in the Stone" (https://sketchfab.com/3d-models/the-sword-in-the-stone-2e37bb0e5eea40cdad41dc3e865b67cc) by Helley (https://sketchfab.com/Helley) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)

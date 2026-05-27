@@ -6,6 +6,8 @@ import Player from '../player/Player';
 import { IGrabbable } from '../interfaces/IGrabbable';
 import Crown from './Crown';
 import { physicsSystem } from '../engine/PhysicsSystem';
+import { assetLoader } from '../engine/AssetLoader';
+import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
 
 export default class Throne extends Interactable implements IPersistent {
 
@@ -86,8 +88,6 @@ export default class Throne extends Interactable implements IPersistent {
       const collider = physicsSystem.addStaticTrimesh(child as THREE.Mesh);
       this.ownedColliders.push(collider);
     });
-
-    console.log(`[Throne] ${this.ownedColliders.length} static collider(s) registered.`);
   }
 
   public override cleanupPhysics(): void {
@@ -100,19 +100,16 @@ export default class Throne extends Interactable implements IPersistent {
     this.ownedColliders = [];
   }
 
-  // ── IPersistent ─────────────────────────────────────────────────────────────
-  
+  public objectType: string = 'throne';
+
   public saveState(): IObjectState {
-    return {
-      position: { x: this.mesh.position.x, y: this.mesh.position.y, z: this.mesh.position.z },
-      rotation: { x: this.mesh.rotation.x, y: this.mesh.rotation.y, z: this.mesh.rotation.z },
-      metadata: { hasCrown: this.hasCrown }
-    };
+    const state = this.savePose(this.objectType);
+    state.metadata = { hasCrown: this.hasCrown };
+    return state;
   }
 
   public loadState(state: IObjectState): void {
-    this.mesh.position.set(state.position.x, state.position.y, state.position.z);
-    this.mesh.rotation.set(state.rotation.x, state.rotation.y, state.rotation.z);
+    this.loadPose(state);
     if (state.metadata) {
       this.hasCrown = !!state.metadata.hasCrown;
       this._refreshCrownVisual();
@@ -140,21 +137,20 @@ export default class Throne extends Interactable implements IPersistent {
     }
   }
 
-  private crownVisual: THREE.Mesh | null = null;
+  private crownVisual: THREE.Object3D | null = null;
   private _refreshCrownVisual(): void {
     if (this.hasCrown) {
       if (!this.crownVisual) {
-        // Reuse the procedural crown geometry from Crown or create one specifically for the scene
-        const crownGeo = new THREE.TorusGeometry(0.2, 0.04, 8, 24);
-        const goldMat = new THREE.MeshStandardMaterial({ 
-          color: 0xffd700, metalness: 0.9, roughness: 0.1, emissive: 0x443300, emissiveIntensity: 0.2
+        const task = assetLoader.fetchGltf('models/crown/crown.glb').then((gltf) => {
+          if (!this.hasCrown) return;
+          const model = SkeletonUtils.clone(gltf.scene);
+          model.scale.set(0.0075, 0.0075, 0.0075);
+          model.position.set(-0.6, 1.75, -0.31);
+          model.rotation.set(- Math.PI / 2.5, 0, 0);
+          this.mesh.add(model);
+          this.crownVisual = model;
         });
-        this.crownVisual = new THREE.Mesh(crownGeo, goldMat);
-        
-        // Position it on the seat
-        this.crownVisual.rotation.x = Math.PI / 2;
-        this.crownVisual.position.set(0, 0.82, 0.1); 
-        this.mesh.add(this.crownVisual);
+        assetLoader.trackInstance(task);
       }
     } else if (this.crownVisual) {
       this.mesh.remove(this.crownVisual);
@@ -166,6 +162,11 @@ export default class Throne extends Interactable implements IPersistent {
 
   public getHasCrown(): boolean {
     return this.hasCrown;
+  }
+
+  public setHasCrown(value: boolean): void {
+    this.hasCrown = value;
+    this._refreshCrownVisual();
   }
 
   public update(_dt: number): void {
