@@ -21,7 +21,7 @@ import { setupReturnIsland } from './islands/ReturnIsland';
 import { WORLD_CONFIG } from '../config/WorldConfig';
 import { ISLAND_PRESETS } from '../config/IslandLightingPresets';
 import { RendererCapabilities } from '../engine/Renderer';
-import PlacementUtility from '../utils/PlacementUtility';
+
 
 /** Object types whose saved transform always overrides island-setup positions. */
 const DYNAMIC_OBJECT_TYPES = new Set(['torch', 'bucket', 'lighter', 'hoe', 'crown']);
@@ -54,7 +54,7 @@ interface IslandData {
   private islandStaticMeshes: Map<number, THREE.Object3D[]> = new Map();
   private loadedIslands: Map<number, IslandData> = new Map();
   private loadedPersistentIds: Set<string> = new Set();
-  private placementUtility?: PlacementUtility;
+
 
   private islandManifests: Record<number, IslandSetupFn> = {
     0: setupRiseIsland,
@@ -90,7 +90,7 @@ interface IslandData {
     this.puzzleManager = new PuzzleManager();
 
     this.interaction = new InteractionManager(camera);
-    this.placementUtility = new PlacementUtility(scene, camera);
+
   }
 
   public initIsland(i: number): IslandData | null {
@@ -354,9 +354,7 @@ interface IslandData {
 
   public update(deltaTime: number, player: Player, grabbables: any[] = []): void {
     this.water.update(deltaTime);
-    if (this.placementUtility && player) {
-      this.placementUtility.update(player.position, this.currentPlatform?.mesh.position);
-    }
+
     if (player) {
       const allGrabbables = [...grabbables, ...this.puzzleObjects.filter(o => o.isHeld !== undefined)];
       this.portalSystem.updateSystem(player, allGrabbables);

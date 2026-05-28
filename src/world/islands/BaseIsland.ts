@@ -36,12 +36,7 @@ export abstract class BaseIsland {
     this.ctx.scene.add(dockObj.mesh);
     this.ctx.addPuzzleObject(dockObj);
 
-    // ==========================================
-    // DEBUG HELPER FOR DOCK (Yellow)
-    // ==========================================
-    const dockHelper = new THREE.BoxHelper(dockObj.mesh, 0xffff00);
-    this.ctx.scene.add(dockHelper);
-    // ==========================================
+
 
     this.setupPlayableAreaBarrier();
 
@@ -261,34 +256,5 @@ export abstract class BaseIsland {
         portal.updateWorldMatrix();
       }
     );
-
-    // ==========================================
-    // DEBUG HELPERS FOR BOAT AND PORTAL (Cyan & Magenta)
-    // ==========================================
-    const boatHelper = new THREE.BoxHelper(boatInstance.mesh, 0x00ffff);
-    this.ctx.scene.add(boatHelper);
-
-    const portalHelper = new THREE.BoxHelper(portal.mesh, 0xff00ff);
-    this.ctx.scene.add(portalHelper);
-
-    const updateDebugHelpers = () => {
-      if (boatInstance.mesh.parent) {
-        boatHelper.update();
-      } else {
-        this.ctx.scene.remove(boatHelper);
-      }
-      
-      if (portal.mesh.parent) {
-        portalHelper.update();
-      } else {
-        this.ctx.scene.remove(portalHelper);
-      }
-      
-      if (boatInstance.mesh.parent || portal.mesh.parent) {
-        requestAnimationFrame(updateDebugHelpers);
-      }
-    };
-    requestAnimationFrame(updateDebugHelpers);
-    // ==========================================
   }
 }
